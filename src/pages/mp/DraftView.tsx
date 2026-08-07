@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { CardButton, HeroCardContent, PlayerCardContent, ROLE_BAR, ovrColor } from "../../components/cards";
 import { SLOT_IDS, type Slots } from "../../game/draft";
 import { eventShortName, heroImage } from "../../game/data";
-import type { DataBundle, Hero } from "../../game/types";
+import { computeStrength, heroFitBonus } from "../../game/strength";
+import type { DataBundle, Hero, RosterPlayer, TeamStrength } from "../../game/types";
 import { legalActions, type EngineState } from "../../mp/engine";
 import { synergyHints } from "../../mp/synergy";
 import type { Board, CardRef, ClientMsg, DraftPublic, RoomSnapshot } from "../../mp/protocol";
@@ -95,6 +96,7 @@ function SynergyTag({
 function MiniBoard({
   name,
   board,
+  strength,
   isMe,
   isTurn,
   isOpener,
@@ -105,6 +107,7 @@ function MiniBoard({
 }: {
   name: string;
   board: Board;
+  strength: TeamStrength;
   isMe: boolean;
   isTurn: boolean;
   isOpener: boolean;
@@ -113,6 +116,11 @@ function MiniBoard({
   denies: number;
   heroById: Map<number, Hero>;
 }) {
+  const roster = SLOT_IDS.map((s) => (board.slots as Slots)[s]).filter(Boolean);
+  const assignedHeroIds = new Set(
+    strength.assignment.map((a) => a.heroId).filter((h): h is number => h != null),
+  );
+  const spareHeroes = board.heroes.filter((h) => !assignedHeroIds.has(h));
   return (
     <div
       className={`rounded-lg border p-2.5 ${
@@ -135,16 +143,43 @@ function MiniBoard({
         {!isTurn && isOpener && (
           <span className="plate text-[10px] tracking-widest text-slate-dim">opens</span>
         )}
+        <span
+          className={`font-mono text-sm font-extrabold ${roster.length ? ovrColor(strength.overall) : "text-slate-dim"}`}
+          title={`${strength.base} base + ${strength.heroBonus} hero fit + ${strength.chemBonus} chemistry`}
+        >
+          {roster.length ? strength.overall : "—"}
+        </span>
       </div>
       <div className="mt-1.5 space-y-0.5">
         {SLOT_IDS.map((slotId) => {
           const p = (board.slots as Slots)[slotId];
+          const rosterIdx = p ? roster.indexOf(p) : -1;
+          const assigned = rosterIdx >= 0 ? strength.assignment[rosterIdx] : null;
+          const hero = assigned?.heroId != null ? heroById.get(assigned.heroId) : undefined;
+          const fit = assigned ? heroFitBonus(assigned.games) : 0;
           return (
             <div key={slotId} className="flex items-center gap-1.5 text-[11px]">
               <span className={`h-3 w-0.5 rounded ${p ? ROLE_BAR[p.role] : "bg-ink-700"}`} />
               {p ? (
                 <>
                   <span className="min-w-0 flex-1 truncate text-slate-strong">{p.nickname}</span>
+                  {hero && (
+                    <span
+                      className="flex shrink-0 items-center gap-1"
+                      title={`${p.nickname}: ${assigned?.games ?? 0}g on ${hero.name} → +${fit} team OVR`}
+                    >
+                      <img
+                        src={heroImage(hero.picture)}
+                        alt={hero.name}
+                        className="h-3.5 w-6 rounded-[2px] object-cover"
+                      />
+                      <span
+                        className={`font-mono text-[10px] tabular-nums ${fit > 0 ? "text-slate-strong" : "text-slate-dim"}`}
+                      >
+                        +{fit}
+                      </span>
+                    </span>
+                  )}
                   <span className={`font-mono font-bold ${ovrColor(p.ovr)}`}>{p.ovr}</span>
                 </>
               ) : (
@@ -155,13 +190,13 @@ function MiniBoard({
         })}
       </div>
       <div className="mt-1.5 flex items-center gap-1">
-        {board.heroes.map((h) => (
+        {spareHeroes.map((h) => (
           <img
             key={h}
             src={heroImage(heroById.get(h)?.picture)}
             alt={heroById.get(h)?.name ?? ""}
-            title={heroById.get(h)?.name}
-            className="h-4 w-[27px] rounded-[2px] object-cover"
+            title={`${heroById.get(h)?.name} — unassigned`}
+            className="h-4 w-[27px] rounded-[2px] object-cover opacity-70"
           />
         ))}
         {Array.from({ length: 5 - board.heroes.length }, (_, i) => (
@@ -171,6 +206,29 @@ function MiniBoard({
           ↻{mulligans} ✕{denies}
         </span>
       </div>
+      {roster.length > 0 && (
+        <div className="mt-1.5 flex items-center gap-2 border-t border-ink-800 pt-1.5 font-mono text-[10px] tabular-nums text-slate-dim">
+          <span title="average OVR of drafted players">{strength.base} base</span>
+          <span title="games played on assigned heroes">+{strength.heroBonus} fit</span>
+          <span title="games played together as teammates">+{strength.chemBonus} chem</span>
+        </div>
+      )}
+      {strength.chemTop.length > 0 && (
+        <div className="mt-1 space-y-0.5">
+          {strength.chemTop.slice(0, 2).map((c, i) => (
+            <div
+              key={i}
+              className="flex items-center justify-between text-[10px]"
+              title={`${c.games} games played together → +${c.bonus} team OVR`}
+            >
+              <span className="min-w-0 truncate text-slate-mid">{c.names.join(" + ")}</span>
+              <span className="ml-1.5 shrink-0 tabular-nums text-slate-dim">
+                {c.games}g<span className="ml-1 font-mono font-bold text-slate-strong">+{c.bonus}</span>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -214,6 +272,17 @@ export function DraftView({
 
   const turnName = d.turnSeat != null ? seats[d.turnSeat]?.name : null;
   const myBoard = mySeat >= 0 ? d.boards[mySeat] : null;
+
+  const strengths = useMemo(
+    () =>
+      d.boards.map((b) => {
+        const roster = SLOT_IDS.map((s) => (b.slots as Slots)[s]).filter(
+          (p): p is RosterPlayer => p != null,
+        );
+        return computeStrength(roster, b.heroes, bundle.playerHeroStats, bundle.squadSynergy, null);
+      }),
+    [d.boards, bundle],
+  );
 
   const act = (card: CardRef) => {
     if (denyArmed) {
@@ -375,6 +444,7 @@ export function DraftView({
             key={s.playerId}
             name={s.name}
             board={d.boards[i]}
+            strength={strengths[i]}
             isMe={i === mySeat}
             isTurn={d.turnSeat === i}
             isOpener={d.openerSeat === i}
