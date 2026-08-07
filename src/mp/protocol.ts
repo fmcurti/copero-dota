@@ -23,7 +23,7 @@ export const DEFAULT_MP_CONFIG: MpConfig = {
 };
 
 export const MIN_SEATS = 2;
-export const MAX_SEATS = 4;
+export const MAX_SEATS = 8;
 export const DENIES_PER_GAME = 1;
 
 export interface Seat {
@@ -53,12 +53,14 @@ export interface Board {
 
 export interface DraftPublic {
   packSeq: number;
+  /** Spread number — what the UI shows as the round. */
+  roundSeq: number;
   openerSeat: number;
   turnSeat: number | null;
   /** Epoch ms the current turn autopicks, or null (timer off / no turn). */
   turnDeadline: number | null;
-  /** Cards already taken or denied are removed from the pack. */
-  currentPack: DrawnPack | null;
+  /** The open spread (1 pack, 2 for 5+ seats); taken/denied cards removed. */
+  currentPacks: DrawnPack[];
   boards: Board[]; // parallel to seats
   takenSteamIds: number[];
   deniedShelf: { card: DeniedCard; bySeat: number; packSeq: number }[];

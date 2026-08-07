@@ -8,6 +8,7 @@ import { simulateTournament } from "../../game/sim";
 import { useRunStore } from "../../game/store";
 import type { SimResult } from "../../game/types";
 import {
+  MAX_SEATS,
   MIN_SEATS,
   makeRoomCode,
   type MpConfig,
@@ -174,7 +175,7 @@ function LobbyView({
         <div className="plate text-sm tracking-[0.4em] text-slate-dim">Sala</div>
         <div className="plate mt-1 text-5xl font-extrabold tracking-[0.2em] text-bone">{code}</div>
         <p className="mt-2 text-xs text-slate-mid">
-          pasale el código (o el link) a tus amigos — 2 a 4 drafters
+          pasale el código (o el link) a tus amigos — 2 a 8 drafters
         </p>
       </div>
 
@@ -186,7 +187,7 @@ function LobbyView({
             <SeatPlate key={s.playerId} seat={s} />
           ),
         )}
-        {Array.from({ length: 4 - snapshot.seats.length }, (_, i) => (
+        {Array.from({ length: MAX_SEATS - snapshot.seats.length }, (_, i) => (
           <div
             key={`empty-${i}`}
             className="rounded-lg border border-dashed border-ink-700 px-4 py-3 text-sm text-slate-dim"

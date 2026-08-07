@@ -17,7 +17,7 @@ import {
   applyAction,
   boardRoster,
   createDraft,
-  openPack,
+  openSpread,
   type EngineState,
 } from "../src/mp/engine";
 import {
@@ -89,7 +89,7 @@ export class CoperoRoom extends Server<Env> {
 
   async onStart() {
     const stored = await this.ctx.storage.get<RoomState>("room");
-    if (stored) this.room = stored;
+    if (stored) this.room = migrateRoom(stored);
   }
 
   private async save() {
@@ -106,10 +106,11 @@ export class CoperoRoom extends Server<Env> {
       draft: e
         ? {
             packSeq: e.packSeq,
+            roundSeq: e.roundSeq,
             openerSeat: e.openerSeat,
             turnSeat: e.turnSeat,
             turnDeadline: r.turnDeadline,
-            currentPack: e.currentPack,
+            currentPacks: e.currentPacks,
             boards: e.boards,
             takenSteamIds: e.takenSteamIds,
             deniedShelf: e.deniedShelf,
@@ -346,12 +347,12 @@ export class CoperoRoom extends Server<Env> {
 
   // ---- draft plumbing ----
 
-  /** Reveal packs until someone has a turn (or the draft is done). */
+  /** Reveal spreads until someone has a turn (or the draft is done). */
   private openUntilTurn() {
     let e = this.room.engine!;
     let guard = 0;
-    while (!e.done && !e.currentPack && guard++ < 60) {
-      e = openPack(e, this.pool!, Math.random);
+    while (!e.done && !e.currentPacks.length && guard++ < 60) {
+      e = openSpread(e, this.pool!, Math.random);
     }
     this.room.engine = e;
   }
@@ -436,6 +437,17 @@ export class CoperoRoom extends Server<Env> {
       await this.ctx.storage.deleteAll();
     }
   }
+}
+
+/** Rooms persisted before the spread refactor stored a single `currentPack`. */
+function migrateRoom(stored: RoomState): RoomState {
+  const e = stored.engine as (EngineState & { currentPack?: unknown }) | null;
+  if (e && !Array.isArray(e.currentPacks)) {
+    e.currentPacks = e.currentPack ? [e.currentPack as EngineState["currentPacks"][number]] : [];
+    delete e.currentPack;
+    e.roundSeq ??= e.packSeq;
+  }
+  return stored;
 }
 
 function sanitizeConfig(c: MpConfig): MpConfig {

@@ -13,7 +13,7 @@ import type { Action } from "./protocol";
 export function autopick(s: EngineState, seat: number, phs: PlayerHeroStats): Action {
   const picks = legalPicks(s, seat);
   if (!picks.length) return { type: "pass" };
-  const pack = s.currentPack!;
+  const spreadPlayers = s.currentPacks.flatMap((p) => p.players);
   const board = s.boards[seat];
   const gamesOn = (steamId: number, heroId: number) =>
     phs[String(steamId)]?.[String(heroId)]?.games ?? 0;
@@ -24,7 +24,7 @@ export function autopick(s: EngineState, seat: number, phs: PlayerHeroStats): Ac
     let bestScore = -Infinity;
     for (const c of playerPicks) {
       if (c.kind !== "player") continue;
-      const p = pack.players.find((x) => x.steamId === c.steamId)!;
+      const p = spreadPlayers.find((x) => x.steamId === c.steamId)!;
       const fit = board.heroes.length
         ? Math.max(...board.heroes.map((h) => heroFitBonus(gamesOn(p.steamId, h))))
         : 0;

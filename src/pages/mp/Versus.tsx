@@ -20,7 +20,7 @@ export default function Versus() {
         <div className="plate-rules py-4">
           <h1 className="plate text-5xl font-extrabold leading-none text-bone">Versus</h1>
           <div className="plate ml-[0.5em] mt-1 text-lg tracking-[0.5em] text-slate-mid">
-            2–4 drafters
+            2–8 drafters
           </div>
         </div>
         <p className="mt-3 text-sm text-slate-mid">

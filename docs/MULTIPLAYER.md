@@ -15,8 +15,11 @@ dramatic sim decides the Copero.
 ## Decisions
 
 ### Lobby
-- **2–4 human drafters** (architecture keeps picks-per-pack generic so 5+ is a
-  config change later, not a redesign).
+- **2–8 human drafters**. With 5+ seats each round opens a **double spread**:
+  two team packs side by side as one shared 20-card table (no shared players
+  between them, displayed heroes deduped) — everyone still takes exactly one
+  card per round, so late pickers keep real choices. A mulligan burns the
+  whole spread.
 - Host configures: format (valve_legacy/standard), **card mode (career
   default** / peak / event), turn timer (**7/15/25/off**, default 15 —
   retuned from 30/45/90 after playtesting: drafts dragged), mulligans per

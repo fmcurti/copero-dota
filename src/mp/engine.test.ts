@@ -10,7 +10,8 @@ import {
   boardComplete,
   createDraft,
   legalActions,
-  openPack,
+  openSpread,
+  packsPerSpread,
   type EngineState,
 } from "./engine";
 import type { Board } from "./protocol";
@@ -59,6 +60,10 @@ function board(partial: Partial<Record<(typeof SLOT_IDS)[number], PackPlayer>>, 
   return { slots: { ...emptySlots(), ...partial }, heroes };
 }
 
+function legalPicksOf(s: EngineState) {
+  return legalActions(s, s.turnSeat!).picks;
+}
+
 /** Play a full draft: every turn takes the given strategy's action. */
 function runDraft(
   s: EngineState,
@@ -68,13 +73,13 @@ function runDraft(
 ): EngineState {
   let guard = 0;
   while (!s.done) {
-    if (++guard > 3000) throw new Error("draft did not terminate");
-    if (!s.currentPack) {
-      s = openPack(s, pool, rng);
+    if (++guard > 6000) throw new Error("draft did not terminate");
+    if (!s.currentPacks.length) {
+      s = openSpread(s, pool, rng);
       continue;
     }
     const seat = s.turnSeat;
-    if (seat == null) throw new Error("open pack but no turn");
+    if (seat == null) throw new Error("open spread but no turn");
     const r = act(s, seat);
     if (r.error) throw new Error(`action failed: ${r.error}`);
     s = r.state;
@@ -100,29 +105,30 @@ function expectValidBoards(s: EngineState) {
 // ---------------------------------------------------------------------------
 
 describe("engine basics", () => {
-  it("opens a pack and gives the opener the first turn", () => {
-    const s = openPack(createDraft(3, { mulligans: 1 }), makePool(), mulberry32(1));
-    expect(s.currentPack).not.toBeNull();
+  it("opens a spread and gives the opener the first turn", () => {
+    const s = openSpread(createDraft(3, { mulligans: 1 }), makePool(), mulberry32(1));
+    expect(s.currentPacks).toHaveLength(1);
     expect(s.packSeq).toBe(1);
+    expect(s.roundSeq).toBe(1);
     expect(s.turnSeat).toBe(0);
     expect(s.usedPackIds).toHaveLength(1);
   });
 
-  it("rotates the turn around the table, then discards the pack and rotates the opener", () => {
-    let s = openPack(createDraft(3, { mulligans: 1 }), makePool(), mulberry32(2));
+  it("rotates the turn around the table, then discards the spread and rotates the opener", () => {
+    let s = openSpread(createDraft(3, { mulligans: 1 }), makePool(), mulberry32(2));
     for (const expected of [0, 1, 2]) {
       expect(s.turnSeat).toBe(expected);
       const pick = legalActions(s, expected).picks[0];
       s = applyAction(s, expected, { type: "pick", card: pick }).state;
     }
-    expect(s.currentPack).toBeNull();
+    expect(s.currentPacks).toHaveLength(0);
     expect(s.turnSeat).toBeNull();
     expect(s.openerSeat).toBe(1);
   });
 
   it("rejects out-of-turn actions and illegal picks", () => {
     const pool = makePool();
-    const s = openPack(createDraft(2, { mulligans: 1 }), pool, mulberry32(3));
+    const s = openSpread(createDraft(2, { mulligans: 1 }), pool, mulberry32(3));
     expect(applyAction(s, 1, { type: "pick", card: legalActions(s, 0).picks[0] }).error).toBe(
       "not-your-turn",
     );
@@ -136,92 +142,132 @@ describe("engine basics", () => {
     // Two packs sharing one player.
     const shared = makePlayer(7777, "mid", 90);
     const pA: Pack = { ...makePack(1, FULL_ROLES, 10), players: [...makePack(1).players.slice(0, 4)].concat(shared) };
-    // fix roles: replace the mid of pack 2 with the same shared player
     const p2 = makePack(2, FULL_ROLES, 20);
     const pB: Pack = { ...p2, players: p2.players.map((p) => (p.role === "mid" ? shared : p)) };
     expect(pA.players.some((p) => p.steamId === 7777)).toBe(true);
 
     let s = createDraft(2, { mulligans: 0 });
-    s = openPack(s, [pA], mulberry32(4));
-    // seat 0 takes the shared player
+    s = openSpread(s, [pA], mulberry32(4));
     s = applyAction(s, 0, { type: "pick", card: { kind: "player", steamId: 7777 } }).state;
-    // seat 1 acts on something else; pack ends
     s = applyAction(s, 1, { type: "pick", card: legalActions(s, 1).picks[0] }).state;
-    s = openPack(s, [pB], mulberry32(5));
+    s = openSpread(s, [pB], mulberry32(5));
     const picks = legalActions(s, s.turnSeat!).picks;
     expect(picks.some((c) => c.kind === "player" && c.steamId === 7777)).toBe(false);
+  });
+});
+
+describe("double spread (5+ seats)", () => {
+  it("packsPerSpread: 1 for 2-4 seats, 2 for 5-8", () => {
+    expect(packsPerSpread(2)).toBe(1);
+    expect(packsPerSpread(4)).toBe(1);
+    expect(packsPerSpread(5)).toBe(2);
+    expect(packsPerSpread(8)).toBe(2);
+  });
+
+  it("opens two packs with no shared players and no duplicate displayed heroes", () => {
+    for (let seed = 1; seed <= 30; seed++) {
+      const s = openSpread(createDraft(6, { mulligans: 1 }), makePool(60), mulberry32(seed));
+      expect(s.currentPacks).toHaveLength(2);
+      expect(s.packSeq).toBe(2);
+      expect(s.roundSeq).toBe(1);
+      const [a, b] = s.currentPacks;
+      const idsA = new Set(a.players.map((p) => p.steamId));
+      expect(b.players.some((p) => idsA.has(p.steamId))).toBe(false);
+      const heroes = [...a.heroes, ...b.heroes];
+      expect(new Set(heroes).size).toBe(heroes.length);
+    }
+  });
+
+  it("a pick from the second pack removes it there and nowhere else", () => {
+    let s = openSpread(createDraft(6, { mulligans: 0 }), makePool(60), mulberry32(9));
+    const target = s.currentPacks[1].players[0];
+    s = applyAction(s, 0, { type: "pick", card: { kind: "player", steamId: target.steamId } }).state;
+    expect(s.currentPacks[1].players.some((p) => p.steamId === target.steamId)).toBe(false);
+    expect(s.currentPacks[0].players).toHaveLength(5);
+    expect(s.boards[0].slots[target.role === "support" ? "support1" : target.role]?.steamId).toBe(
+      target.steamId,
+    );
+  });
+
+  it("mulligan burns the whole spread; replacement is a fresh two packs", () => {
+    const pool = makePool(60);
+    let s = openSpread(createDraft(5, { mulligans: 1 }), pool, mulberry32(11));
+    const burned = s.currentPacks.map((p) => p.id);
+    s = applyAction(s, 0, { type: "mulligan" }).state;
+    expect(s.currentPacks).toHaveLength(0);
+    s = openSpread(s, pool, mulberry32(12));
+    expect(s.currentPacks).toHaveLength(2);
+    expect(s.openerSeat).toBe(0);
+    for (const id of burned) {
+      expect(s.usedPackIds).toContain(id);
+      expect(s.currentPacks.some((p) => p.id === id)).toBe(false);
+    }
   });
 });
 
 describe("deny", () => {
   it("denied player is destroyed globally, consumes the action and a deny", () => {
     const pool = makePool();
-    let s = openPack(createDraft(2, { mulligans: 0 }), pool, mulberry32(6));
-    const victim = s.currentPack!.players[0];
+    let s = openSpread(createDraft(2, { mulligans: 0 }), pool, mulberry32(6));
+    const victim = s.currentPacks[0].players[0];
     s = applyAction(s, 0, { type: "deny", card: { kind: "player", steamId: victim.steamId } }).state;
     expect(s.deniesLeft[0]).toBe(0);
     expect(s.takenSteamIds).toContain(victim.steamId);
     expect(s.deniedShelf).toHaveLength(1);
     expect(s.deniedShelf[0].bySeat).toBe(0);
-    expect(s.currentPack!.players.some((p) => p.steamId === victim.steamId)).toBe(false);
+    expect(s.currentPacks[0].players.some((p) => p.steamId === victim.steamId)).toBe(false);
     expect(s.turnSeat).toBe(1); // action consumed, turn moved on
   });
 
-  it("denied hero only leaves this pack — it can be drafted from a later pack", () => {
-    // Both packs share hero 42.
+  it("denied hero only leaves this pack — it can be drafted from a later spread", () => {
     const pA = { ...makePack(1, FULL_ROLES, 0), signatureHeroes: [42, 43, 44, 45, 46] };
     const pB = { ...makePack(2, FULL_ROLES, 0), signatureHeroes: [42, 53, 54, 55, 56] };
     let s = createDraft(2, { mulligans: 0 });
-    s = openPack(s, [pA], mulberry32(7));
+    s = openSpread(s, [pA], mulberry32(7));
     s = applyAction(s, 0, { type: "deny", card: { kind: "hero", heroId: 42 } }).state;
-    expect(s.currentPack!.heroes).not.toContain(42);
+    expect(s.currentPacks[0].heroes).not.toContain(42);
     s = applyAction(s, 1, { type: "pick", card: legalActions(s, 1).picks[0] }).state;
-    s = openPack(s, [pB], mulberry32(8));
+    s = openSpread(s, [pB], mulberry32(8));
     const picks = legalPicksOf(s);
     expect(picks.some((c) => c.kind === "hero" && c.heroId === 42)).toBe(true);
   });
 
   it("cannot deny with no denies left", () => {
     const pool = makePool();
-    let s = openPack(createDraft(2, { mulligans: 0 }), pool, mulberry32(9));
+    let s = openSpread(createDraft(2, { mulligans: 0 }), pool, mulberry32(9));
     s.deniesLeft = [0, 0];
-    const card = { kind: "player" as const, steamId: s.currentPack!.players[0].steamId };
+    const card = { kind: "player" as const, steamId: s.currentPacks[0].players[0].steamId };
     expect(applyAction(s, 0, { type: "deny", card }).error).toBe("cannot-deny");
   });
 });
 
-function legalPicksOf(s: EngineState) {
-  return legalActions(s, s.turnSeat!).picks;
-}
-
 describe("mulligan", () => {
-  it("opener may mulligan before acting: replacement pack, same opener, one mulligan spent", () => {
+  it("opener may mulligan before acting: replacement spread, same opener, one mulligan spent", () => {
     const pool = makePool();
-    let s = openPack(createDraft(3, { mulligans: 1 }), pool, mulberry32(10));
-    const burned = s.currentPack!.id;
+    let s = openSpread(createDraft(3, { mulligans: 1 }), pool, mulberry32(10));
+    const burned = s.currentPacks[0].id;
     expect(legalActions(s, 0).canMulligan).toBe(true);
     s = applyAction(s, 0, { type: "mulligan" }).state;
     expect(s.mulligansLeft[0]).toBe(0);
-    expect(s.currentPack).toBeNull();
-    s = openPack(s, pool, mulberry32(11));
+    expect(s.currentPacks).toHaveLength(0);
+    s = openSpread(s, pool, mulberry32(11));
     expect(s.openerSeat).toBe(0); // same opener re-opens
-    expect(s.currentPack!.id).not.toBe(burned); // burned pack is used up
+    expect(s.currentPacks[0].id).not.toBe(burned); // burned pack is used up
     expect(s.usedPackIds).toContain(burned);
   });
 
   it("non-openers cannot mulligan; opener cannot after acting", () => {
     const pool = makePool();
-    let s = openPack(createDraft(2, { mulligans: 2 }), pool, mulberry32(12));
+    let s = openSpread(createDraft(2, { mulligans: 2 }), pool, mulberry32(12));
     expect(legalActions(s, 1).canMulligan).toBe(false);
     expect(applyAction(s, 1, { type: "mulligan" }).error).toBe("illegal-mulligan");
-    s = applyAction(s, 0, { type: "pick", card: legalPicksOf(s) [0] }).state;
+    s = applyAction(s, 0, { type: "pick", card: legalPicksOf(s)[0] }).state;
     expect(legalActions(s, 0).canMulligan).toBe(false);
   });
 });
 
 describe("skips and passes", () => {
   it("a seat with no legal pick and no deny left is auto-passed", () => {
-    // Seat 1: heroes full, only mid open — pack has no mid and no pickable hero for them.
     const pack = makePack(1, ["safelane", "safelane", "safelane", "safelane", "safelane"], 10);
     let s = createDraft(2, { mulligans: 0 });
     s.boards[1] = board(
@@ -235,11 +281,11 @@ describe("skips and passes", () => {
     );
     s.takenSteamIds = [9001, 9002, 9003, 9004];
     s.deniesLeft = [1, 0];
-    s = openPack(s, [pack], mulberry32(13));
+    s = openSpread(s, [pack], mulberry32(13));
     expect(s.turnSeat).toBe(0);
     s = applyAction(s, 0, { type: "pick", card: legalPicksOf(s)[0] }).state;
-    // seat 1 was auto-passed: pack over, no error state
-    expect(s.currentPack).toBeNull();
+    // seat 1 was auto-passed: spread over, no error state
+    expect(s.currentPacks).toHaveLength(0);
     expect(s.turnSeat).toBeNull();
   });
 
@@ -256,7 +302,7 @@ describe("skips and passes", () => {
       [11, 12, 13, 14, 15],
     );
     s.takenSteamIds = [9001, 9002, 9003, 9004];
-    s = openPack(s, [pack], mulberry32(14));
+    s = openSpread(s, [pack], mulberry32(14));
     s = applyAction(s, 0, { type: "pick", card: legalPicksOf(s)[0] }).state;
     expect(s.turnSeat).toBe(1);
     const legal = legalActions(s, 1);
@@ -264,12 +310,11 @@ describe("skips and passes", () => {
     expect(legal.canDeny).toBe(true);
     expect(legal.canPass).toBe(true);
     s = applyAction(s, 1, { type: "pass" }).state;
-    expect(s.currentPack).toBeNull();
+    expect(s.currentPacks).toHaveLength(0);
   });
 
   it("completed boards are skipped entirely and the draft finishes", () => {
     let s = createDraft(2, { mulligans: 0 });
-    // Seat 1 is already complete.
     s.boards[1] = board(
       {
         safelane: makePlayer(9001, "safelane"),
@@ -292,31 +337,33 @@ describe("skips and passes", () => {
 });
 
 describe("full drafts", () => {
-  it("greedy 2/3/4-seat drafts complete with legal boards", () => {
-    for (const seats of [2, 3, 4]) {
+  it("greedy drafts complete with legal boards at every table size", () => {
+    for (const seats of [2, 3, 4, 5, 6, 8]) {
       const rng = mulberry32(100 + seats);
-      const done = runDraft(createDraft(seats, { mulligans: 1 }), makePool(60), rng, (st, seat) =>
+      const done = runDraft(createDraft(seats, { mulligans: 1 }), makePool(120), rng, (st, seat) =>
         applyAction(st, seat, { type: "pick", card: legalPicksOf(st)[0] }),
       );
       expectValidBoards(done);
+      // spread size matches the table size throughout
+      expect(done.packSeq).toBe(done.roundSeq * packsPerSpread(seats));
     }
   });
 
-  it("fuzz: random legal actions always terminate with legal boards", () => {
+  it("fuzz: random legal actions always terminate with legal boards (2-8 seats)", () => {
     for (let iter = 0; iter < 120; iter++) {
       const rng = mulberry32(iter * 7 + 1);
-      const seats = 2 + (iter % 3);
-      const done = runDraft(createDraft(seats, { mulligans: 2 }), makePool(80), rng, (st, seat) => {
+      const seats = 2 + (iter % 7);
+      const done = runDraft(createDraft(seats, { mulligans: 2 }), makePool(160), rng, (st, seat) => {
         const legal = legalActions(st, seat);
         const options: (() => ReturnType<typeof applyAction>)[] = [];
         for (const pick of legal.picks) {
           options.push(() => applyAction(st, seat, { type: "pick", card: pick }));
         }
-        if (legal.canDeny && st.currentPack) {
-          const cards = [
-            ...st.currentPack.players.map((p) => ({ kind: "player" as const, steamId: p.steamId })),
-            ...st.currentPack.heroes.map((h) => ({ kind: "hero" as const, heroId: h })),
-          ];
+        if (legal.canDeny && st.currentPacks.length) {
+          const cards = st.currentPacks.flatMap((p) => [
+            ...p.players.map((x) => ({ kind: "player" as const, steamId: x.steamId })),
+            ...p.heroes.map((h) => ({ kind: "hero" as const, heroId: h })),
+          ]);
           if (cards.length) {
             options.push(() =>
               applyAction(st, seat, {
@@ -335,9 +382,9 @@ describe("full drafts", () => {
   });
 
   it("autopick is deterministic and can finish a whole draft by itself", () => {
-    const phs = {}; // no hero stats → pure OVR/first-hero ordering, still deterministic
+    const phs = {};
     const rng = mulberry32(31337);
-    const done = runDraft(createDraft(3, { mulligans: 1 }), makePool(60), rng, (st, seat) => {
+    const done = runDraft(createDraft(6, { mulligans: 1 }), makePool(120), rng, (st, seat) => {
       const a1 = autopick(st, seat, phs);
       const a2 = autopick(st, seat, phs);
       expect(a1).toEqual(a2);
@@ -348,7 +395,7 @@ describe("full drafts", () => {
 });
 
 describe("real card pool", () => {
-  it("4-seat random draft over the real career-mode pool terminates with legal boards", async () => {
+  it("random drafts over the real pool terminate with legal boards (incl. 8 seats)", async () => {
     const load = async (name: string) =>
       JSON.parse(await readFile(path.join(process.cwd(), "public/data", name), "utf8"));
     const bundle: DataBundle = {
@@ -358,10 +405,15 @@ describe("real card pool", () => {
       playerHeroStats: await load("playerHeroStats.json"),
       squadSynergy: await load("squadSynergy.json"),
     };
-    for (const mode of ["career", "peak", "event"] as const) {
+    const runs: { mode: "career" | "peak" | "event"; seats: number; seed: number }[] = [
+      { mode: "career", seats: 8, seed: 1 },
+      { mode: "peak", seats: 6, seed: 2 },
+      { mode: "event", seats: 4, seed: 3 },
+    ];
+    for (const { mode, seats, seed } of runs) {
       const pool = buildCardPool(bundle, "valve_legacy", mode).packs;
-      const rng = mulberry32(mode === "career" ? 1 : mode === "peak" ? 2 : 3);
-      const done = runDraft(createDraft(4, { mulligans: 1 }), pool, rng, (st, seat) => {
+      const rng = mulberry32(seed);
+      const done = runDraft(createDraft(seats, { mulligans: 1 }), pool, rng, (st, seat) => {
         const legal = legalActions(st, seat);
         const pick = legal.picks[Math.floor(rng() * legal.picks.length)];
         return pick

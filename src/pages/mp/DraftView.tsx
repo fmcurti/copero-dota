@@ -19,9 +19,10 @@ function pseudoEngine(d: DraftPublic, numSeats: number): EngineState {
   return {
     numSeats,
     packSeq: d.packSeq,
+    roundSeq: d.roundSeq,
     openerSeat: d.openerSeat,
     turnSeat: d.turnSeat,
-    currentPack: d.currentPack,
+    currentPacks: d.currentPacks,
     actedSeats: [],
     boards: d.boards,
     takenSteamIds: d.takenSteamIds,
@@ -211,7 +212,6 @@ export function DraftView({
     return m;
   }, [bundle]);
 
-  const pack = d.currentPack;
   const turnName = d.turnSeat != null ? seats[d.turnSeat]?.name : null;
   const myBoard = mySeat >= 0 ? d.boards[mySeat] : null;
 
@@ -230,17 +230,9 @@ export function DraftView({
         <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
           <div>
             <div className="plate text-sm tracking-widest text-slate-dim">
-              Pack #{d.packSeq} — {seats[d.openerSeat]?.name} opens
+              Round #{d.roundSeq} — {seats[d.openerSeat]?.name} opens
+              {d.currentPacks.length > 1 && " a double spread"}
             </div>
-            {pack && (
-              <div className="text-lg font-bold text-bone">
-                {pack.teamName}
-                <span className="ml-2 text-sm font-normal text-slate-dim">
-                  {eventShortName(bundle, pack.eventId)}
-                  {pack.placement != null && <> · finished {ordinal(pack.placement)}</>}
-                </span>
-              </div>
-            )}
           </div>
           <div className="text-right">
             <div className={`text-sm font-bold ${myTurn ? "text-bone" : "text-slate-mid"}`}>
@@ -258,54 +250,65 @@ export function DraftView({
           </div>
         </div>
 
-        {pack && (
-          <div className="flex flex-wrap gap-3" key={`${d.packSeq}`}>
-            {pack.players.map((p, i) => {
-              const ref: CardRef = { kind: "player", steamId: p.steamId };
-              const pickable = legal.picks.some((c) => sameCard(c, ref));
-              const clickable = myTurn && (denyArmed ? legal.canDeny : pickable);
-              return (
-                <CardButton
-                  key={p.steamId}
-                  delay={i * 0.06}
-                  disabled={!clickable}
-                  onPick={() => act(ref)}
-                >
-                  <SynergyTag
-                    steamId={p.steamId}
-                    myBoard={myBoard}
-                    taken={d.takenSteamIds}
-                    bundle={bundle}
-                    nickById={nickById}
-                  />
-                  <PlayerCardContent
-                    p={p}
-                    subtitle={
-                      snapshot.config.cardMode === "event"
-                        ? `${p.team} · ${eventShortName(bundle, p.eventId)}`
-                        : p.team
-                    }
-                  />
-                </CardButton>
-              );
-            })}
-            {pack.heroes.map((h, i) => {
-              const ref: CardRef = { kind: "hero", heroId: h };
-              const pickable = legal.picks.some((c) => sameCard(c, ref));
-              const clickable = myTurn && (denyArmed ? legal.canDeny : pickable);
-              return (
-                <CardButton
-                  key={h}
-                  delay={0.3 + i * 0.06}
-                  disabled={!clickable}
-                  onPick={() => act(ref)}
-                >
-                  <HeroCardContent hero={heroById.get(h)} />
-                </CardButton>
-              );
-            })}
-          </div>
-        )}
+        <div key={`${d.roundSeq}`}>
+          {d.currentPacks.map((pack, pi) => (
+            <div key={pack.id} className={pi > 0 ? "mt-6" : ""}>
+              <div className="mb-2 text-lg font-bold text-bone">
+                {pack.teamName}
+                <span className="ml-2 text-sm font-normal text-slate-dim">
+                  {eventShortName(bundle, pack.eventId)}
+                  {pack.placement != null && <> · finished {ordinal(pack.placement)}</>}
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-3">
+                {pack.players.map((p, i) => {
+                  const ref: CardRef = { kind: "player", steamId: p.steamId };
+                  const pickable = legal.picks.some((c) => sameCard(c, ref));
+                  const clickable = myTurn && (denyArmed ? legal.canDeny : pickable);
+                  return (
+                    <CardButton
+                      key={p.steamId}
+                      delay={pi * 0.25 + i * 0.06}
+                      disabled={!clickable}
+                      onPick={() => act(ref)}
+                    >
+                      <SynergyTag
+                        steamId={p.steamId}
+                        myBoard={myBoard}
+                        taken={d.takenSteamIds}
+                        bundle={bundle}
+                        nickById={nickById}
+                      />
+                      <PlayerCardContent
+                        p={p}
+                        subtitle={
+                          snapshot.config.cardMode === "event"
+                            ? `${p.team} · ${eventShortName(bundle, p.eventId)}`
+                            : p.team
+                        }
+                      />
+                    </CardButton>
+                  );
+                })}
+                {pack.heroes.map((h, i) => {
+                  const ref: CardRef = { kind: "hero", heroId: h };
+                  const pickable = legal.picks.some((c) => sameCard(c, ref));
+                  const clickable = myTurn && (denyArmed ? legal.canDeny : pickable);
+                  return (
+                    <CardButton
+                      key={h}
+                      delay={pi * 0.25 + 0.3 + i * 0.06}
+                      disabled={!clickable}
+                      onPick={() => act(ref)}
+                    >
+                      <HeroCardContent hero={heroById.get(h)} />
+                    </CardButton>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
 
         {myTurn && (
           <div className="mt-4 flex flex-wrap items-center gap-2">
