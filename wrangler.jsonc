@@ -1,0 +1,18 @@
+{
+  // One Worker serves everything: the SPA + /data assets, and the versus
+  // rooms as partyserver Durable Objects (SQLite-backed = free tier).
+  // The @cloudflare/vite-plugin manages the asset directory at build time.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "el-copero-del-dota",
+  "main": "./worker/index.ts",
+  "compatibility_date": "2026-08-01",
+  "assets": {
+    "not_found_handling": "single-page-application",
+    "binding": "ASSETS",
+    "run_worker_first": ["/parties/*"]
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "CoperoRoom", "class_name": "CoperoRoom" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["CoperoRoom"] }]
+}

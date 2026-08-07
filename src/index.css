@@ -1,0 +1,103 @@
+@import "@fontsource/barlow-condensed/600.css";
+@import "@fontsource/barlow-condensed/700.css";
+@import "@fontsource/barlow-condensed/800.css";
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------------------
+   Trophy minimal — near-monochrome charcoal, warm bone text, and ONE accent:
+   trophy gold, spent only where it's earned (the Copa, a champion, a 322-0,
+   a 90+ rating). Display type: heavy condensed caps, like the engraving band
+   on a cup's plinth.
+--------------------------------------------------------------------------- */
+
+@theme {
+  /* neutral charcoal scale (no blue cast) */
+  --color-ink-950: #0b0b0d;
+  --color-ink-900: #111114;
+  --color-ink-800: #18181c;
+  --color-ink-700: #232329;
+  --color-ink-600: #34343c;
+
+  /* text */
+  --color-bone: #e9e5da; /* warm off-white — headlines, emphasis */
+  --color-slate-strong: #b9b9c2; /* primary body */
+  --color-slate-mid: #8a8a94; /* secondary */
+  --color-slate-dim: #5d5d66; /* captions, labels */
+
+  /* the accent */
+  --color-trophy: #d4af37;
+  --color-trophy-dim: #8a7326;
+
+  /* functional card hues — muted, harmonized */
+  --color-role-safelane: #d9a441;
+  --color-role-mid: #c6534b;
+  --color-role-offlane: #8b7bc7;
+  --color-role-support: #6fa3c7;
+
+  --font-display: "Barlow Condensed", "Arial Narrow", sans-serif;
+  --font-mono: "SF Mono", ui-monospace, Menlo, monospace;
+}
+
+body {
+  @apply bg-ink-950 text-slate-strong antialiased;
+}
+
+/* Engraved plate — the signature device: condensed caps between hairline
+   gold rules, like the name band on a trophy. */
+.plate {
+  @apply font-display uppercase;
+  letter-spacing: 0.06em;
+}
+
+.plate-rules {
+  @apply border-y border-trophy-dim/60;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-bone);
+  outline-offset: 2px;
+}
+
+@keyframes card-flip-in {
+  from {
+    opacity: 0;
+    transform: rotateY(70deg) translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: rotateY(0) translateY(0);
+  }
+}
+
+.card-flip {
+  animation: card-flip-in 0.35s ease-out both;
+  transform-style: preserve-3d;
+}
+
+/* the animation's final keyframe pins opacity:1 (fill-mode both), which would
+   override the dimmed disabled state — so skip the animation when disabled */
+.card-flip:disabled {
+  animation: none;
+}
+
+@keyframes beat-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.beat-in {
+  animation: beat-in 0.45s ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card-flip,
+  .beat-in {
+    animation: none;
+  }
+}
