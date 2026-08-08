@@ -114,6 +114,26 @@ describe("engine basics", () => {
     expect(s.usedPackIds).toHaveLength(1);
   });
 
+  it("starts on the seat the caller draws, and rotates from there", () => {
+    expect(createDraft(4, { mulligans: 1 }).openerSeat).toBe(0); // default unchanged
+    for (const seat of [0, 1, 2, 3]) {
+      expect(createDraft(4, { mulligans: 1, openerSeat: seat }).openerSeat).toBe(seat);
+    }
+    // out-of-range rolls wrap rather than producing an unreachable seat
+    expect(createDraft(3, { mulligans: 1, openerSeat: 5 }).openerSeat).toBe(2);
+    expect(createDraft(3, { mulligans: 1, openerSeat: -1 }).openerSeat).toBe(2);
+
+    // a non-zero start still gives that seat the first turn, then wraps in order
+    let s = openSpread(createDraft(3, { mulligans: 1, openerSeat: 2 }), makePool(), mulberry32(7));
+    for (const expected of [2, 0, 1]) {
+      expect(s.turnSeat).toBe(expected);
+      s = applyAction(s, s.turnSeat!, { type: "pick", card: legalActions(s, s.turnSeat!).picks[0] }).state;
+    }
+    // spread exhausted → opener advances off the drawn seat, not off seat 0
+    s = openSpread(s, makePool(), mulberry32(8));
+    expect(s.openerSeat).toBe(0);
+  });
+
   it("rotates the turn around the table, then discards the spread and rotates the opener", () => {
     let s = openSpread(createDraft(3, { mulligans: 1 }), makePool(), mulberry32(2));
     for (const expected of [0, 1, 2]) {

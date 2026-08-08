@@ -108,7 +108,7 @@ export default function Draft() {
       setStinger(true);
       return;
     }
-    navigate("/");
+    navigate("/solo");
   }, [bundle, pool, active, pendingStart, setPendingStart, startRun, navigate]);
 
   const roster = useMemo(
@@ -191,7 +191,7 @@ export default function Draft() {
 
   const newRun = () => {
     resetRun();
-    navigate("/");
+    navigate("/solo");
   };
 
   if (result) {

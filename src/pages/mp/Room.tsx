@@ -65,7 +65,7 @@ export default function Room() {
           <p className="mt-2 text-sm text-slate-mid">{locked}</p>
         </div>
         <Link
-          to="/mp"
+          to="/"
           className="mt-6 inline-block rounded-lg border border-ink-600 px-6 py-3 text-sm font-semibold text-slate-strong hover:border-slate-mid hover:text-bone"
         >
           Back to Versus
@@ -647,7 +647,7 @@ function BroadcastView({
           </div>
           <div className="flex gap-3">
             <button
-              onClick={() => navigate("/mp")}
+              onClick={() => navigate("/")}
               className="flex-1 rounded-lg border border-ink-600 py-3 text-sm font-semibold text-slate-strong hover:border-slate-mid hover:text-bone"
             >
               Back to Versus

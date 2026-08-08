@@ -23,8 +23,8 @@ export default function App() {
             El Copero <span className="mx-1 text-slate-dim">del</span> Dota
           </Link>
           <nav className="flex gap-6">
-            {navLink("/", "New Run")}
-            {navLink("/mp", "Versus")}
+            {navLink("/", "Versus")}
+            {navLink("/solo", "New Run")}
             {navLink("/history", "History")}
           </nav>
         </div>

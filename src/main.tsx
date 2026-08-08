@@ -1,6 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { HashRouter, Route, Routes } from "react-router-dom";
+import { HashRouter, Navigate, Route, Routes } from "react-router-dom";
 import App from "./App";
 import Home from "./pages/Home";
 import Draft from "./pages/Draft";
@@ -14,10 +14,13 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     <HashRouter>
       <Routes>
         <Route element={<App />}>
-          <Route path="/" element={<Home />} />
+          {/* Versus is the front door; solo lives at /solo. */}
+          <Route path="/" element={<Versus />} />
+          <Route path="/solo" element={<Home />} />
           <Route path="/draft" element={<Draft />} />
           <Route path="/history" element={<History />} />
-          <Route path="/mp" element={<Versus />} />
+          {/* Old shared links: /mp/:code room links must keep working. */}
+          <Route path="/mp" element={<Navigate to="/" replace />} />
           <Route path="/mp/:code" element={<Room />} />
         </Route>
       </Routes>

@@ -349,6 +349,9 @@ export class CoperoRoom extends Server<Env> {
         await this.ensureData();
         this.room.engine = createDraft(this.room.seats.length, {
           mulligans: this.room.config.mulligans,
+          // The first opener is drawn, not handed to the host — from there the
+          // usual rotation applies, so everyone still opens once per cycle.
+          openerSeat: Math.floor(Math.random() * this.room.seats.length),
         });
         this.room.phase = "drafting";
         this.openUntilTurn();
