@@ -10,7 +10,7 @@ import { buildCardPool } from "../src/game/cards";
 import { generateFieldMulti } from "../src/game/field";
 import { randomSeed } from "../src/game/rng";
 import { simulateTournament } from "../src/game/sim";
-import { computeStrength } from "../src/game/strength";
+import { computeStrength, swapHeroAssignment } from "../src/game/strength";
 import type { DataBundle, Pack, SimTeam, TeamStrength } from "../src/game/types";
 import { autopick } from "../src/mp/autopick";
 import {
@@ -56,6 +56,7 @@ interface RoomState {
   engine: EngineState | null;
   turnDeadline: number | null;
   strengths: TeamStrength[] | null;
+  heroAssignments: Record<string, number>[] | null;
   fieldSeed: number | null;
   field: SimTeam[] | null;
   simSeed: number | null;
@@ -69,6 +70,7 @@ const freshRoom = (): RoomState => ({
   engine: null,
   turnDeadline: null,
   strengths: null,
+  heroAssignments: null,
   fieldSeed: null,
   field: null,
   simSeed: null,
@@ -119,6 +121,7 @@ export class CoperoRoom extends Server<Env> {
           }
         : null,
       strengths: r.strengths,
+      heroAssignments: r.heroAssignments,
       field: r.field,
       simSeed: r.simSeed,
       beat: r.beat,
@@ -310,6 +313,30 @@ export class CoperoRoom extends Server<Env> {
         await this.afterDraftStep();
         return;
       }
+      case "assignHero": {
+        if (this.room.phase !== "assembled" || !this.room.engine)
+          return this.sendError(conn, "bad-phase", "Hero assignments are already locked.");
+        if (this.room.config.heroAlloc !== "manual")
+          return this.sendError(conn, "auto-assignment", "This room uses automatic hero assignment.");
+
+        const board = this.room.engine.boards[seat];
+        const roster = boardRoster(board);
+        if (!roster.some((p) => p.steamId === msg.steamId))
+          return this.sendError(conn, "bad-player", "That player is not on your roster.");
+        if (!board.heroes.includes(msg.heroId))
+          return this.sendError(conn, "bad-hero", "That hero is not on your roster.");
+
+        const assignments = this.room.heroAssignments;
+        if (!assignments?.[seat])
+          return this.sendError(conn, "no-assignment", "Hero assignments are unavailable.");
+        assignments[seat] = swapHeroAssignment(
+          assignments[seat],
+          String(msg.steamId),
+          msg.heroId,
+        );
+        await this.recomputeAssembled();
+        break;
+      }
       case "play": {
         if (!isHost) return this.sendError(conn, "not-host", "Only the host can play.");
         if (this.room.phase !== "assembled")
@@ -384,24 +411,49 @@ export class CoperoRoom extends Server<Env> {
     await this.ensureData();
     const e = this.room.engine!;
     const b = this.bundle!;
-    const strengths = this.room.seats.map((_, i) =>
+    const automaticStrengths = this.room.seats.map((_, i) =>
       computeStrength(boardRoster(e.boards[i]), e.boards[i].heroes, b.playerHeroStats, b.squadSynergy, null),
     );
-    this.room.strengths = strengths;
+    this.room.heroAssignments = automaticStrengths.map((strength, i) => {
+      const assignment: Record<string, number> = {};
+      boardRoster(e.boards[i]).forEach((player, playerIndex) => {
+        const heroId = strength.assignment[playerIndex]?.heroId;
+        if (heroId != null) assignment[String(player.steamId)] = heroId;
+      });
+      return assignment;
+    });
     this.room.fieldSeed = randomSeed();
+    await this.recomputeAssembled();
+    this.room.simSeed = randomSeed();
+    this.beats = null;
+    this.room.phase = "assembled";
+    this.room.turnDeadline = null;
+    await this.ctx.storage.deleteAlarm();
+  }
+
+  /** Recalculate strengths and the seeded field after a manual hero swap. */
+  private async recomputeAssembled() {
+    await this.ensureData();
+    const e = this.room.engine!;
+    const b = this.bundle!;
+    const strengths = this.room.seats.map((_, i) =>
+      computeStrength(
+        boardRoster(e.boards[i]),
+        e.boards[i].heroes,
+        b.playerHeroStats,
+        b.squadSynergy,
+        this.room.config.heroAlloc === "manual" ? (this.room.heroAssignments?.[i] ?? null) : null,
+      ),
+    );
+    this.room.strengths = strengths;
     this.room.field = generateFieldMulti(
       this.room.seats.map((s, i) => ({
         ownerId: s.playerId,
         name: s.name,
         strength: strengths[i].overall,
       })),
-      this.room.fieldSeed,
+      this.room.fieldSeed!,
     );
-    this.room.simSeed = randomSeed();
-    this.beats = null;
-    this.room.phase = "assembled";
-    this.room.turnDeadline = null;
-    await this.ctx.storage.deleteAlarm();
   }
 
   // ---- the one alarm: turn timeout / beat ticker / cleanup ----
@@ -447,6 +499,8 @@ function migrateRoom(stored: RoomState): RoomState {
     delete e.currentPack;
     e.roundSeq ??= e.packSeq;
   }
+  stored.config = sanitizeConfig(stored.config);
+  stored.heroAssignments ??= null;
   return stored;
 }
 
@@ -454,6 +508,7 @@ function sanitizeConfig(c: MpConfig): MpConfig {
   return {
     format: c.format === "standard" ? "standard" : "valve_legacy",
     cardMode: c.cardMode === "peak" || c.cardMode === "event" ? c.cardMode : "career",
+    heroAlloc: c.heroAlloc === "manual" ? "manual" : "auto",
     timerSecs: c.timerSecs === 7 || c.timerSecs === 25 || c.timerSecs === null ? c.timerSecs : 15,
     mulligans: c.mulligans === 0 || c.mulligans === 2 ? c.mulligans : 1,
   };

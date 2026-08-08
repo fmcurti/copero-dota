@@ -162,8 +162,10 @@ Never denies, never mulligans.
   `alarm()`, partyserver owns it). On fire, if the same turn is live → autopick.
   Turn timer / beat ticker / cleanup never coexist, so the one-alarm-per-DO limit
   is fine. `onAlarm` must be idempotent (at-least-once + retries).
-- Draft done → `assembled`: `computeStrength` per seat (auto hero assignment),
-  `generateFieldMulti`, roll `fieldSeed`/`simSeed`. No field rerolls.
+- Draft done → `assembled`: seed each seat with the optimal hero assignment,
+  `computeStrength`, `generateFieldMulti`, and roll `fieldSeed`/`simSeed`. In
+  manual mode, each drafter can swap heroes on their own board; the server
+  validates the swap and recomputes strengths/field. No field rerolls.
 - `play` (host) → `broadcasting`: server runs `simulateTournament` once (only for
   the schedule), `buildBeats`, advances `beat.idx` on an alarm chain per beat's `ms`;
   `beat` actions pause/resume/skip. Last beat → `done`.

@@ -1,5 +1,12 @@
 import type { DrawnPack, Slots } from "../game/draft";
-import type { CardMode, GameFormat, RosterPlayer, SimTeam, TeamStrength } from "../game/types";
+import type {
+  CardMode,
+  GameFormat,
+  HeroAlloc,
+  RosterPlayer,
+  SimTeam,
+  TeamStrength,
+} from "../game/types";
 
 // ---------------------------------------------------------------------------
 // Versus wire contract. Everything in this game is public information (open
@@ -11,6 +18,7 @@ export type Phase = "lobby" | "drafting" | "assembled" | "broadcasting" | "done"
 export interface MpConfig {
   format: GameFormat;
   cardMode: CardMode;
+  heroAlloc: HeroAlloc;
   timerSecs: 7 | 15 | 25 | null;
   mulligans: 0 | 1 | 2;
 }
@@ -18,6 +26,7 @@ export interface MpConfig {
 export const DEFAULT_MP_CONFIG: MpConfig = {
   format: "valve_legacy",
   cardMode: "career",
+  heroAlloc: "auto",
   timerSecs: 15,
   mulligans: 1,
 };
@@ -75,6 +84,7 @@ export interface RoomSnapshot {
   draft: DraftPublic | null;
   // assembled →
   strengths: TeamStrength[] | null; // parallel to seats
+  heroAssignments: Record<string, number>[] | null; // parallel to seats, steamId → heroId
   field: SimTeam[] | null;
   simSeed: number | null;
   // broadcasting →
@@ -89,6 +99,7 @@ export type ClientMsg =
   | { t: "deny"; card: CardRef }
   | { t: "pass" }
   | { t: "mulligan" }
+  | { t: "assignHero"; steamId: number; heroId: number } // own board, assembled/manual only
   | { t: "play" } // host, assembled → broadcasting
   | { t: "beat"; action: "pause" | "resume" | "skip" }; // host
 

@@ -4,13 +4,15 @@ import { Broadcast } from "../../components/Broadcast";
 import { OptionCard, Section } from "../../components/options";
 import { ovrColor } from "../../components/cards";
 import { useBundle, useHeroById } from "../../game/data";
+import { SLOT_IDS } from "../../game/draft";
 import { simulateTournament } from "../../game/sim";
 import { useRunStore } from "../../game/store";
-import type { SimResult } from "../../game/types";
+import type { Hero, SimResult } from "../../game/types";
 import {
   MAX_SEATS,
   MIN_SEATS,
   makeRoomCode,
+  type ClientMsg,
   type MpConfig,
   type RoomSnapshot,
   type Seat,
@@ -69,7 +71,13 @@ export default function Room() {
         />
       )}
       {snapshot.phase === "assembled" && (
-        <AssembledView snapshot={snapshot} mySeat={mySeat} isHost={isHost} send={send} />
+        <AssembledView
+          snapshot={snapshot}
+          mySeat={mySeat}
+          isHost={isHost}
+          send={send}
+          heroById={heroById}
+        />
       )}
       {(snapshot.phase === "broadcasting" || snapshot.phase === "done") && (
         <BroadcastView
@@ -237,6 +245,22 @@ function LobbyView({
             disabled={!isHost}
           />
         </Section>
+        <Section label="Player — Hero Allocation">
+          <OptionCard
+            title="Automatic"
+            desc="Each hero is matched to the player who fits it best."
+            selected={c.heroAlloc === "auto"}
+            onClick={() => set({ heroAlloc: "auto" })}
+            disabled={!isHost}
+          />
+          <OptionCard
+            title="Manual"
+            desc="Each drafter chooses which hero their players get before the tournament."
+            selected={c.heroAlloc === "manual"}
+            onClick={() => set({ heroAlloc: "manual" })}
+            disabled={!isHost}
+          />
+        </Section>
         <Section label="Turn Timer">
           {TIMERS.map((t) => (
             <OptionCard
@@ -285,21 +309,75 @@ function AssembledView({
   mySeat,
   isHost,
   send,
+  heroById,
 }: {
   snapshot: RoomSnapshot;
   mySeat: number;
   isHost: boolean;
-  send: (m: { t: "play" }) => void;
+  send: (m: ClientMsg) => void;
+  heroById: Map<number, Hero>;
 }) {
   const { seats, strengths, field } = snapshot;
+  const myBoard = mySeat >= 0 ? snapshot.draft?.boards[mySeat] : null;
+  const myAssignment = mySeat >= 0 ? snapshot.heroAssignments?.[mySeat] : null;
+  const myStrength = mySeat >= 0 ? strengths?.[mySeat] : null;
+  const manual = snapshot.config.heroAlloc === "manual";
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <div className="plate-rules py-3 text-center">
         <div className="plate text-2xl font-extrabold text-bone">Rosters locked</div>
         <div className="mt-1 text-xs text-slate-mid">
-          heroes auto-assigned · field drawn · one sim decides everything
+          {manual
+            ? "adjust your hero assignments · one sim decides everything"
+            : "heroes auto-assigned · field drawn · one sim decides everything"}
         </div>
       </div>
+
+      {manual && myBoard && myAssignment && (
+        <div className="rounded-xl border border-bone/40 bg-ink-900/40 p-4">
+          <div className="plate mb-1 text-sm tracking-widest text-slate-dim">
+            Your Hero Assignment
+          </div>
+          <p className="mb-3 text-xs text-slate-mid">
+            Changing a hero swaps it with the player currently using it and updates your team OVR.
+          </p>
+          <div className="space-y-2">
+            {SLOT_IDS.map((slot, playerIndex) => {
+              const player = myBoard.slots[slot];
+              if (!player) return null;
+              const assigned = myStrength?.assignment[playerIndex];
+              return (
+                <div key={player.steamId} className="flex items-center gap-3">
+                  <span className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-strong">
+                    {player.nickname}
+                  </span>
+                  <select
+                    aria-label={`Hero for ${player.nickname}`}
+                    value={myAssignment[String(player.steamId)] ?? ""}
+                    onChange={(event) =>
+                      send({
+                        t: "assignHero",
+                        steamId: player.steamId,
+                        heroId: Number(event.target.value),
+                      })
+                    }
+                    className="w-40 rounded border border-ink-600 bg-ink-900 px-2 py-1 text-sm text-slate-strong sm:w-52"
+                  >
+                    {myBoard.heroes.map((heroId) => (
+                      <option key={heroId} value={heroId}>
+                        {heroById.get(heroId)?.name ?? heroId}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="w-12 text-right font-mono text-xs text-slate-dim">
+                    {assigned?.games ?? 0}g
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         {seats.map((s, i) => (
@@ -406,12 +484,24 @@ function BroadcastView({
       gamesWon: stats.gamesWon,
       gamesLost: stats.gamesLost,
       champion: result.champion.name,
-      config: { format: config.format, cardMode: config.cardMode, rerolls: 0, heroAlloc: "auto" },
+      config: {
+        format: config.format,
+        cardMode: config.cardMode,
+        rerolls: 0,
+        heroAlloc: config.heroAlloc,
+      },
       roster: board
-        ? (["safelane", "mid", "offlane", "support1", "support2"] as const).map((slot) => {
+        ? SLOT_IDS.map((slot, playerIndex) => {
             const p = board.slots[slot];
             return p
-              ? { nickname: p.nickname, steamId: p.steamId, role: p.role, ovr: p.ovr, heroId: null }
+              ? {
+                  nickname: p.nickname,
+                  steamId: p.steamId,
+                  role: p.role,
+                  ovr: p.ovr,
+                  heroId:
+                    snapshot.strengths?.[mySeat]?.assignment[playerIndex]?.heroId ?? null,
+                }
               : { nickname: "—", steamId: 0, role: "support" as const, ovr: 0, heroId: null };
           })
         : [],

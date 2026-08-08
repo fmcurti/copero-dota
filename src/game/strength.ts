@@ -56,6 +56,26 @@ function permutations(n: number): number[][] {
 
 const PERMS_5 = permutations(5);
 
+/** Assign `heroId` to `steamId`, swapping with its current owner when necessary. */
+export function swapHeroAssignment(
+  assignment: Record<string, number>,
+  steamId: string,
+  heroId: number,
+): Record<string, number> {
+  const next = { ...assignment };
+  const previousHero = next[steamId];
+  const previousOwner = Object.keys(next).find(
+    (otherSteamId) => otherSteamId !== steamId && next[otherSteamId] === heroId,
+  );
+
+  if (previousOwner != null) {
+    if (previousHero != null) next[previousOwner] = previousHero;
+    else delete next[previousOwner];
+  }
+  next[steamId] = heroId;
+  return next;
+}
+
 export function computeStrength(
   roster: RosterPlayer[],
   heroes: number[],

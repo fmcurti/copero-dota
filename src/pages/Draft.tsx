@@ -10,7 +10,7 @@ import { FIELD_REROLL_EXCUSES, fieldRank, generateField } from "../game/field";
 import { randomSeed } from "../game/rng";
 import { simulateTournament } from "../game/sim";
 import { useRunStore } from "../game/store";
-import { computeStrength } from "../game/strength";
+import { computeStrength, swapHeroAssignment } from "../game/strength";
 import type { RosterPlayer } from "../game/types";
 
 function ordinal(n: number): string {
@@ -152,16 +152,7 @@ export default function Draft() {
   const picked = pickedIds(slots);
 
   const swapHero = (steamId: string, heroId: number) => {
-    const next = { ...heroAssign };
-    const prev = next[steamId];
-    // if another player holds this hero, give them ours (swap)
-    const other = Object.keys(next).find((k) => k !== steamId && next[k] === heroId);
-    if (other != null) {
-      if (prev != null) next[other] = prev;
-      else delete next[other];
-    }
-    next[steamId] = heroId;
-    setHeroAssign(next);
+    setHeroAssign(swapHeroAssignment(heroAssign, steamId, heroId));
   };
 
   const simulate = () => {

@@ -21,9 +21,10 @@ dramatic sim decides the Copero.
   card per round, so late pickers keep real choices. A mulligan burns the
   whole spread.
 - Host configures: format (valve_legacy/standard), **card mode (career
-  default** / peak / event), turn timer (**7/15/25/off**, default 15 —
-  retuned from 30/45/90 after playtesting: drafts dragged), mulligans per
-  drafter (default 1, range 0–2 as the difficulty knob).
+  default** / peak / event), hero allocation (**automatic** default / manual),
+  turn timer (**7/15/25/off**, default 15 — retuned from 30/45/90 after
+  playtesting: drafts dragged), mulligans per drafter (default 1, range 0–2
+  as the difficulty knob).
 - Join by room code. Reconnect = replay current snapshot from the DO.
 
 ### Draft — booster pass-around with team packs
@@ -67,8 +68,10 @@ dramatic sim decides the Copero.
   contest is human-vs-human; bots are credible spoilers.
 - **Natural seeding** exactly like solo (snake by strength into two groups of
   9) — humans land wherever their draft puts them.
-- Pre-sim is fully automatic: optimal hero assignment, one generated field,
-  **no field rerolls**; host presses Play.
+- Hero assignment starts from the optimal automatic match. In manual mode,
+  each drafter can swap the five heroes among their own players before the
+  host presses Play; team strength and the shared field update for everyone.
+  There are **no field rerolls**.
 - **One dramatic sim** decides the session. Winner = best-placed human team.
 - **Broadcast reveal**: results auto-advance in beats, simultaneously for
   everyone: group tables (the drafters' groups last) → bracket rounds on a
@@ -98,7 +101,8 @@ lobby → drafting → assembled → broadcasting → done
 ```
 
 Server-authoritative. Client→server: `join`, `configure` (host), `start`
-(host), `pick {cardId}`, `deny {cardId}`, `mulligan`, `play` (host), `leave`.
+(host), `pick {cardId}`, `deny {cardId}`, `mulligan`, `assignHero`, `play`
+(host), `leave`.
 Server→clients: full room snapshot on every change (state is tiny) —
 `{phase, config, seats[], openerIndex, currentPack, turnSeat, boards[],
 takenSteamIds, deniedShelf[], mulligansLeft[], deniesLeft[], field?, simSeed?,
