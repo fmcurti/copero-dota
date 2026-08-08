@@ -543,7 +543,7 @@ function ClashStrip({
         {taunt && (
           <div className="anim-taunt mt-2 text-center">
             <div
-              className="plate-italic inline-block max-w-full truncate rounded-md border-2 border-dire bg-ink-950/95 px-6 py-2.5 text-xl text-bone sm:text-2xl"
+              className="plate-italic inline-block max-w-full truncate rounded-md border-2 border-dire bg-ink-950/95 px-6 py-2.5 text-xl normal-case text-bone sm:text-2xl"
               style={{ boxShadow: "0 0 30px rgba(226, 87, 70, 0.4)" }}
             >
               “{taunt}”
@@ -648,7 +648,7 @@ export function Broadcast({
   controlled,
   onControl,
   perspectiveOwnerId,
-  winPhrases,
+  serverTaunt,
 }: {
   result: SimResult;
   teamName: string;
@@ -659,8 +659,11 @@ export function Broadcast({
   onControl?: (action: "pause" | "resume" | "skip") => void;
   /** Whose dots perspective and champion-plate line (defaults to the isUser team). */
   perspectiveOwnerId?: string;
-  /** Victory taunts by ownerId — one shows when that owner beats another human. */
-  winPhrases?: Record<string, string[]>;
+  /**
+   * Versus mode: the winner's victory phrase for the current taunt beat.
+   * Phrases are server-side secrets; this is the only one clients ever get.
+   */
+  serverTaunt?: { ownerId: string; phrase: string } | null;
 }) {
   const beats = useMemo(() => buildBeats(result), [result]);
   const [localIdx, setLocalIdx] = useState(0);
@@ -722,16 +725,12 @@ export function Broadcast({
       : null;
   const clashMatch = clash ? result.rounds[clash.roundIdx]?.matches[clash.matchIdx] : null;
 
-  // Victory phrase: on the taunt beat, the winner picks one of their lines —
-  // seeded by match position so every client lands on the same phrase.
-  let taunt: string | null = null;
-  if (cur.kind === "taunt" && clashMatch && winPhrases) {
-    const phrases = clashMatch.winner.ownerId ? winPhrases[clashMatch.winner.ownerId] : undefined;
-    if (clashMatch.loser.ownerId != null && phrases?.length) {
-      const pick = ((result.seed >>> 0) + cur.roundIdx * 1009 + cur.matchIdx * 101) % phrases.length;
-      taunt = phrases[pick];
-    }
-  }
+  // Victory phrase: the server resolves it for the current taunt beat and
+  // sends exactly one — sanity-check it belongs to this match's winner.
+  const taunt =
+    cur.kind === "taunt" && clashMatch && serverTaunt?.ownerId === clashMatch.winner.ownerId
+      ? serverTaunt.phrase
+      : null;
 
   const phaseLabel = done
     ? "Ceremonia"

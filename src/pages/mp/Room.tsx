@@ -611,11 +611,7 @@ function BroadcastView({
       result={result}
       teamName={myName}
       perspectiveOwnerId={playerId}
-      winPhrases={Object.fromEntries(
-        seats
-          .filter((s) => s.winPhrases?.length)
-          .map((s) => [s.playerId, s.winPhrases!]),
-      )}
+      serverTaunt={snapshot.taunt}
       controlled={{ idx: beat.idx, playing: beat.playing }}
       onControl={isHost ? (action) => send({ t: "beat", action }) : undefined}
       footer={

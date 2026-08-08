@@ -53,8 +53,6 @@ export interface Seat {
   name: string;
   connected: boolean;
   isHost: boolean;
-  /** Victory taunts, shown when this drafter takes a series off another human. */
-  winPhrases?: string[];
 }
 
 export type CardRef = { kind: "player"; steamId: number } | { kind: "hero"; heroId: number };
@@ -104,6 +102,11 @@ export interface RoomSnapshot {
   simSeed: number | null;
   // broadcasting →
   beat: { idx: number; playing: boolean } | null;
+  /**
+   * The victory phrase for the current taunt beat, if any. Phrases live only
+   * on the server — this is the single moment one is ever sent to clients.
+   */
+  taunt?: { ownerId: string; phrase: string } | null;
 }
 
 export type ClientMsg =
