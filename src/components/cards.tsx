@@ -47,10 +47,10 @@ export function CardButton({
       onClick={onPick}
       disabled={disabled}
       style={{ animationDelay: `${delay}s` }}
-      className={`card-flip relative flex aspect-[2/3] w-[calc(33.333%-0.5rem)] flex-col overflow-hidden rounded-lg border shadow-lg transition sm:w-[calc(20%-0.6rem)] ${
+      className={`card-flip group relative flex aspect-[2/3] w-[calc(33.333%-0.5rem)] flex-col overflow-hidden rounded-lg border transition duration-200 sm:w-[calc(20%-0.6rem)] ${
         disabled
           ? "cursor-not-allowed border-ink-700 opacity-30 grayscale"
-          : "border-ink-600 hover:-translate-y-1 hover:border-slate-mid"
+          : "card-shine border-ink-600 shadow-[0_8px_20px_rgba(0,0,0,0.45)] hover:-translate-y-1.5 hover:border-trophy-dim/70 hover:shadow-[0_14px_32px_rgba(0,0,0,0.6),0_0_18px_rgba(212,175,55,0.12)]"
       }`}
     >
       {children}
@@ -71,7 +71,7 @@ export function PlayerCardContent({ p, subtitle }: { p: RosterPlayer; subtitle?:
   return (
     <>
       <div className={`h-1.5 ${ROLE_BAR[p.role]}`} />
-      <div className="flex flex-1 flex-col bg-ink-800/80 p-2.5 text-left sm:p-3">
+      <div className="flex flex-1 flex-col bg-gradient-to-b from-ink-800/95 to-ink-900/90 p-2.5 text-left sm:p-3">
         <span
           className={`plate self-start rounded-sm border px-1.5 py-0.5 text-[11px] font-semibold ${ROLE_BADGE[p.role]}`}
         >
@@ -99,13 +99,19 @@ export function PlayerCardContent({ p, subtitle }: { p: RosterPlayer; subtitle?:
 
 export function HeroCardContent({ hero }: { hero: Hero | undefined }) {
   return (
-    <div className="flex flex-1 flex-col bg-ink-800/80">
+    <div className="flex flex-1 flex-col bg-gradient-to-b from-ink-800/95 to-ink-900/90">
       <div className="px-2.5 pt-2.5">
         <span className="plate rounded-sm bg-ink-900/70 px-1.5 py-0.5 text-[11px] font-semibold text-slate-mid">
           Hero
         </span>
       </div>
-      <img src={heroImage(hero?.picture)} alt={hero?.name ?? ""} className="mt-2 w-full" />
+      <div className="mt-2 overflow-hidden">
+        <img
+          src={heroImage(hero?.picture)}
+          alt={hero?.name ?? ""}
+          className="w-full transition duration-300 group-hover:scale-[1.06]"
+        />
+      </div>
       <div className="mt-auto truncate p-2.5 text-center text-base font-bold text-bone">
         {hero?.name}
       </div>

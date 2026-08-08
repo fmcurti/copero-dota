@@ -1,13 +1,16 @@
 @import "@fontsource/barlow-condensed/600.css";
 @import "@fontsource/barlow-condensed/700.css";
 @import "@fontsource/barlow-condensed/800.css";
+@import "@fontsource/barlow-condensed/800-italic.css";
 @import "tailwindcss";
 
 /* ---------------------------------------------------------------------------
-   Trophy minimal — near-monochrome charcoal, warm bone text, and ONE accent:
-   trophy gold, spent only where it's earned (the Copa, a champion, a 322-0,
-   a 90+ rating). Display type: heavy condensed caps, like the engraving band
-   on a cup's plinth.
+   TI broadcast — the trophy-minimal charcoal survives, but staged like the
+   main event: forged panels under arena light, a faint gold halo overhead,
+   and the Radiant/Dire duality reserved for the only thing it should mean —
+   wins and losses. Gold stays earned: the Copa, a champion, a 322-0, a 90+.
+   Display type: heavy condensed caps (the engraving band on a cup's plinth);
+   its 800-italic cut is the broadcast voice — VS plates and clash strips.
 --------------------------------------------------------------------------- */
 
 @theme {
@@ -27,6 +30,13 @@
   /* the accent */
   --color-trophy: #d4af37;
   --color-trophy-dim: #8a7326;
+  --color-gold-hi: #f5e6b0;
+
+  /* the duality — wins go Radiant, losses go Dire. Nothing else wears them. */
+  --color-radiant: #7cc46a;
+  --color-radiant-dim: #3f6b35;
+  --color-dire: #e25746;
+  --color-dire-dim: #8a3328;
 
   /* functional card hues — muted, harmonized */
   --color-role-safelane: #d9a441;
@@ -42,21 +52,159 @@ body {
   @apply bg-ink-950 text-slate-strong antialiased;
 }
 
-/* Engraved plate — the signature device: condensed caps between hairline
-   gold rules, like the name band on a trophy. */
-.plate {
-  @apply font-display uppercase;
-  letter-spacing: 0.06em;
+@layer base {
+  /* interactive things read as interactive */
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  select:not(:disabled),
+  summary {
+    cursor: pointer;
+  }
 }
 
-.plate-rules {
-  @apply border-y border-trophy-dim/60;
+/* Arena atmosphere: a faint gold halo from above, corner vignette, and film
+   grain — behind everything, in front of the flat base coat. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(1100px 520px at 50% -8%, rgba(212, 175, 55, 0.055), transparent 65%),
+    radial-gradient(140% 110% at 50% 55%, transparent 55%, rgba(0, 0, 0, 0.55) 100%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");
+}
+
+/* Composable building blocks live in the components layer so Tailwind
+   utilities stacked on the same element (border colors, tracking, …) win. */
+@layer components {
+  /* Engraved plate — the signature device: condensed caps between hairline
+     gold rules, like the name band on a trophy. */
+  .plate {
+    @apply font-display uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .plate-rules {
+    @apply border-y border-trophy-dim/60;
+  }
+
+/* Broadcast voice: the 800-italic cut, for VS plates and clash strips. */
+.plate-italic {
+  @apply font-display uppercase italic;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+/* Forged panel — brushed charcoal with a lit top bevel. */
+.panel {
+  background: linear-gradient(180deg, #17171b 0%, #111114 55%, #0e0e11 100%);
+  border: 1px solid var(--color-ink-700);
+  box-shadow:
+    inset 0 1px 0 rgba(233, 229, 218, 0.06),
+    0 10px 28px rgba(0, 0, 0, 0.4);
+}
+
+/* Angled broadcast plates (lower-third language). */
+.angled {
+  clip-path: polygon(12px 0, 100% 0, calc(100% - 12px) 100%, 0 100%);
+}
+.angled-l {
+  clip-path: polygon(0 0, 100% 0, calc(100% - 14px) 100%, 0 100%);
+}
+.angled-r {
+  clip-path: polygon(14px 0, 100% 0, 100% 100%, 0 100%);
+}
+
+/* Gold, spent where it's earned. */
+.gold-text {
+  background: linear-gradient(173deg, var(--color-gold-hi) 8%, var(--color-trophy) 46%, var(--color-trophy-dim) 92%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.gold-shimmer {
+  background: linear-gradient(
+    100deg,
+    var(--color-trophy-dim) 0%,
+    var(--color-trophy) 32%,
+    var(--color-gold-hi) 50%,
+    var(--color-trophy) 68%,
+    var(--color-trophy-dim) 100%
+  );
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer 4.5s ease-in-out infinite;
+}
+
+/* LIVE indicator */
+.live-dot {
+  position: relative;
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  background: var(--color-dire);
+  box-shadow: 0 0 8px rgba(226, 87, 70, 0.8);
+  animation: live-pulse 1.6s ease-in-out infinite;
+}
+
+/* Card shine — a light pass across the face on hover. */
+.card-shine::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  pointer-events: none;
+  background: linear-gradient(
+    115deg,
+    transparent 38%,
+    rgba(233, 229, 218, 0.14) 48%,
+    rgba(233, 229, 218, 0.02) 52%,
+    transparent 62%
+  );
+  transform: translateX(-130%);
+  transition: transform 0.55s ease;
+}
+.card-shine:hover::after {
+  transform: translateX(130%);
+}
+
+/* The big call-to-action (Start Run / Play The International) — forged in
+   Dota's dark logo red, lit from the top edge. */
+.cta-dota {
+  background: linear-gradient(180deg, #c4402f 0%, #9e2a1e 48%, #711a12 100%);
+  color: #f6e9de;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    0 0 0 1px rgba(158, 42, 30, 0.55),
+    0 6px 22px rgba(158, 42, 30, 0.28);
+  transition: filter 0.15s ease, transform 0.15s ease, box-shadow 0.3s ease;
+}
+.cta-dota:hover:not(:disabled) {
+  filter: brightness(1.12);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    0 0 0 1px rgba(196, 64, 47, 0.7),
+    0 6px 30px rgba(196, 64, 47, 0.42);
+}
+  .cta-dota:active:not(:disabled) {
+    transform: translateY(1px);
+  }
+  .cta-pulse {
+    animation: cta-pulse 2.6s ease-in-out infinite;
+  }
 }
 
 :focus-visible {
   outline: 2px solid var(--color-bone);
   outline-offset: 2px;
 }
+
+/* ------------------------------- motion ---------------------------------- */
 
 @keyframes card-flip-in {
   from {
@@ -68,12 +216,10 @@ body {
     transform: rotateY(0) translateY(0);
   }
 }
-
 .card-flip {
   animation: card-flip-in 0.35s ease-out both;
   transform-style: preserve-3d;
 }
-
 /* the animation's final keyframe pins opacity:1 (fill-mode both), which would
    override the dimmed disabled state — so skip the animation when disabled */
 .card-flip:disabled {
@@ -83,21 +229,393 @@ body {
 @keyframes beat-in {
   from {
     opacity: 0;
-    transform: translateY(8px);
+    transform: translateY(10px);
   }
   to {
     opacity: 1;
     transform: translateY(0);
   }
 }
-
 .beat-in {
   animation: beat-in 0.45s ease-out both;
 }
 
+/* Title card: sharpen out of the arena haze. */
+@keyframes title-in {
+  from {
+    opacity: 0;
+    transform: scale(1.05);
+    filter: blur(7px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+    filter: blur(0);
+  }
+}
+.anim-title-in {
+  animation: title-in 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes eyebrow-in {
+  from {
+    opacity: 0;
+    letter-spacing: 0.9em;
+  }
+  to {
+    opacity: 1;
+    letter-spacing: 0.4em;
+  }
+}
+.anim-eyebrow-in {
+  animation: eyebrow-in 0.9s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes rule-grow {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+.anim-rule-grow {
+  animation: rule-grow 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* Clash plates slam in from the wings; the VS mark punches through. */
+@keyframes slam-l {
+  from {
+    opacity: 0;
+    transform: translateX(-56px) skewX(-6deg);
+  }
+  60% {
+    transform: translateX(4px) skewX(0);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+@keyframes slam-r {
+  from {
+    opacity: 0;
+    transform: translateX(56px) skewX(-6deg);
+  }
+  60% {
+    transform: translateX(-4px) skewX(0);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+.anim-slam-l {
+  animation: slam-l 0.42s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.anim-slam-r {
+  animation: slam-r 0.42s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes vs-pop {
+  from {
+    opacity: 0;
+    transform: scale(2.4);
+    filter: blur(4px);
+  }
+  55% {
+    opacity: 1;
+    filter: blur(0);
+  }
+  70% {
+    transform: scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.anim-vs-pop {
+  animation: vs-pop 0.5s cubic-bezier(0.2, 1.2, 0.3, 1) 0.18s both;
+}
+@keyframes clash-flash {
+  0% {
+    opacity: 0;
+  }
+  35% {
+    opacity: 0.85;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+.anim-clash-flash {
+  animation: clash-flash 0.55s ease-out 0.3s both;
+}
+
+/* Scores and series dots tick in with a punch. */
+@keyframes score-pop {
+  from {
+    transform: scale(1.7);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+.anim-score-pop {
+  animation: score-pop 0.32s cubic-bezier(0.2, 1.2, 0.3, 1) both;
+}
+@keyframes dot-pop {
+  from {
+    opacity: 0;
+    transform: scale(0);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.35);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.anim-dot-pop {
+  animation: dot-pop 0.3s ease-out both;
+}
+
+/* Group ticker rows: the matchday's result washes over the row. */
+@keyframes row-win {
+  from {
+    background-color: rgba(124, 196, 106, 0.22);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+@keyframes row-loss {
+  from {
+    background-color: rgba(226, 87, 70, 0.16);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+.anim-row-win {
+  animation: row-win 0.85s ease-out both;
+}
+.anim-row-loss {
+  animation: row-loss 0.85s ease-out both;
+}
+
+/* Reveal sweep for freshly decided matches. */
+@keyframes sweep {
+  from {
+    transform: translateX(-110%);
+  }
+  to {
+    transform: translateX(110%);
+  }
+}
+.anim-sweep {
+  position: relative;
+  overflow: hidden;
+}
+.anim-sweep::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(105deg, transparent 30%, rgba(233, 229, 218, 0.1) 50%, transparent 70%);
+  animation: sweep 0.8s ease-out 0.15s both;
+}
+
+/* Seal stamp — the 322-0 and qualification marks. */
+@keyframes stamp-in {
+  from {
+    opacity: 0;
+    transform: scale(2.4) rotate(-7deg);
+  }
+  62% {
+    opacity: 1;
+    transform: scale(0.94) rotate(0.5deg);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) rotate(0);
+  }
+}
+.anim-stamp {
+  animation: stamp-in 0.45s cubic-bezier(0.2, 1.1, 0.3, 1) both;
+}
+
+/* Champion ceremony */
+@keyframes shimmer {
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+@keyframes rays-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+.rays {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 780px;
+  height: 780px;
+  margin: -390px 0 0 -390px;
+  pointer-events: none;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    rgba(212, 175, 55, 0.07) 8deg,
+    transparent 16deg,
+    transparent 30deg,
+    rgba(212, 175, 55, 0.05) 38deg,
+    transparent 46deg,
+    transparent 60deg,
+    rgba(212, 175, 55, 0.08) 70deg,
+    transparent 80deg,
+    transparent 95deg,
+    rgba(212, 175, 55, 0.05) 104deg,
+    transparent 113deg,
+    transparent 128deg,
+    rgba(212, 175, 55, 0.07) 137deg,
+    transparent 146deg,
+    transparent 165deg,
+    rgba(212, 175, 55, 0.06) 175deg,
+    transparent 185deg,
+    transparent 205deg,
+    rgba(212, 175, 55, 0.08) 216deg,
+    transparent 227deg,
+    transparent 248deg,
+    rgba(212, 175, 55, 0.05) 258deg,
+    transparent 268deg,
+    transparent 290deg,
+    rgba(212, 175, 55, 0.07) 300deg,
+    transparent 310deg,
+    transparent 335deg,
+    rgba(212, 175, 55, 0.06) 345deg,
+    transparent 355deg
+  );
+  mask-image: radial-gradient(closest-side, rgba(0, 0, 0, 0.9), transparent 72%);
+  -webkit-mask-image: radial-gradient(closest-side, rgba(0, 0, 0, 0.9), transparent 72%);
+  animation: rays-spin 60s linear infinite;
+}
+
+@keyframes spark {
+  0% {
+    opacity: 0;
+    transform: translateY(14px) scale(0.4);
+  }
+  25% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-46px) scale(1);
+  }
+}
+.spark {
+  position: absolute;
+  bottom: 18%;
+  width: 3px;
+  height: 3px;
+  border-radius: 9999px;
+  background: var(--color-trophy);
+  box-shadow: 0 0 6px rgba(212, 175, 55, 0.9);
+  opacity: 0; /* invisible unless the animation is running (reduced motion) */
+  animation: spark 2.6s ease-out infinite;
+}
+.spark:nth-child(1) { left: 16%; animation-delay: 0s; }
+.spark:nth-child(2) { left: 27%; animation-delay: 1.1s; }
+.spark:nth-child(3) { left: 36%; animation-delay: 0.4s; }
+.spark:nth-child(4) { left: 45%; animation-delay: 1.7s; }
+.spark:nth-child(5) { left: 53%; animation-delay: 0.8s; }
+.spark:nth-child(6) { left: 62%; animation-delay: 2s; }
+.spark:nth-child(7) { left: 71%; animation-delay: 0.2s; }
+.spark:nth-child(8) { left: 82%; animation-delay: 1.4s; }
+
+@keyframes live-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 4px rgba(226, 87, 70, 0.7);
+    opacity: 1;
+  }
+  50% {
+    box-shadow: 0 0 12px rgba(226, 87, 70, 1);
+    opacity: 0.55;
+  }
+}
+
+@keyframes cta-pulse {
+  0%,
+  100% {
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.22),
+      0 0 0 1px rgba(158, 42, 30, 0.55),
+      0 6px 22px rgba(158, 42, 30, 0.24);
+  }
+  50% {
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.22),
+      0 0 0 1px rgba(196, 64, 47, 0.8),
+      0 6px 34px rgba(196, 64, 47, 0.5);
+  }
+}
+
+/* Timer urgency (draft clock under 10s). */
+@keyframes urgent {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+.anim-urgent {
+  animation: urgent 0.9s ease-in-out infinite;
+}
+
+/* Full-screen stinger (run start / draft start). */
+@keyframes stinger-fade {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+    visibility: hidden;
+  }
+}
+.stinger {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    radial-gradient(900px 480px at 50% 38%, rgba(212, 175, 55, 0.08), transparent 60%),
+    var(--color-ink-950);
+  animation: stinger-fade 0.4s ease-in 1s both;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .card-flip,
-  .beat-in {
-    animation: none;
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }

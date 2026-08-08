@@ -98,6 +98,20 @@ export interface TeamStrength {
 
 // ---- Tournament ----
 
+/** Some players get carried by fate: a proc takes that game outright. */
+export interface LuckTrait {
+  /** Per-game proc chance. */
+  chance: number;
+  /** Broadcast stamp shown when it procs ("La suerte del carreado"). */
+  label: string;
+}
+
+/** Which side(s) procced their luck trait in one game. */
+export interface LuckRoll {
+  a: boolean;
+  b: boolean;
+}
+
 export interface SimTeam {
   id: string;
   name: string;
@@ -105,14 +119,18 @@ export interface SimTeam {
   isUser: boolean;
   /** Human owner of this team ("solo" in single-player, a playerId in versus); null = AI. */
   ownerId: string | null;
+  luck?: LuckTrait;
 }
 
 export interface GroupGameRow {
   id: string;
   group: string;
+  round: number; // 0-based round-robin matchday — drives the live ticker
   a: SimTeam;
   b: SimTeam;
   games: ("a" | "b")[]; // Bo2 series
+  /** Parallel to games; present when either side has a luck trait. */
+  luckGames?: LuckRoll[];
 }
 
 export interface GroupStanding {
@@ -131,6 +149,8 @@ export interface BracketMatch {
   loser: SimTeam;
   bestOf: number;
   games: ("a" | "b")[];
+  /** Parallel to games; present when either side has a luck trait. */
+  luckGames?: LuckRoll[];
 }
 
 export interface BracketRound {

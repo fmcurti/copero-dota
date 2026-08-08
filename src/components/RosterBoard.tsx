@@ -29,11 +29,14 @@ export function RosterBoard({
 }) {
   const roster = SLOT_IDS.map((s) => slots[s]).filter(Boolean);
   return (
-    <div className="rounded-xl border border-ink-700 bg-ink-900/40 p-4">
+    <div className="panel rounded-xl p-4">
       <div className="mb-3 flex items-baseline justify-between">
         <h2 className="plate text-sm tracking-widest text-slate-dim">Your Roster</h2>
         <div className="flex items-baseline gap-2 font-mono" title="avg OVR + hero fit + chemistry">
-          <span className={`text-3xl font-extrabold ${ovrColor(strength.overall)}`}>
+          <span
+            key={strength.overall}
+            className={`anim-score-pop text-3xl font-extrabold ${ovrColor(strength.overall)}`}
+          >
             {strength.overall || "—"}
           </span>
           <span className="text-[10px] uppercase text-slate-dim">Team OVR</span>

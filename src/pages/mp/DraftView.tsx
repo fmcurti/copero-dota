@@ -123,9 +123,9 @@ function MiniBoard({
   const spareHeroes = board.heroes.filter((h) => !assignedHeroIds.has(h));
   return (
     <div
-      className={`rounded-lg border p-2.5 ${
+      className={`rounded-lg border p-2.5 transition-colors ${
         isTurn
-          ? "border-bone/60 bg-ink-800/80"
+          ? "border-bone/60 bg-ink-800/80 shadow-[0_0_16px_rgba(233,229,218,0.07)]"
           : isMe
             ? "border-ink-600 bg-ink-900/60"
             : "border-ink-700 bg-ink-900/40"
@@ -304,13 +304,18 @@ export function DraftView({
             </div>
           </div>
           <div className="text-right">
-            <div className={`text-sm font-bold ${myTurn ? "text-bone" : "text-slate-mid"}`}>
+            <div
+              className={`flex items-center justify-end gap-2 text-sm font-bold ${
+                myTurn ? (denyArmed ? "text-dire" : "text-bone") : "text-slate-mid"
+              }`}
+            >
+              {myTurn && !denyArmed && <span className="live-dot" />}
               {myTurn ? (denyArmed ? "DENY MODE — click any card to destroy it" : "Your pick") : `Waiting for ${turnName ?? "…"}`}
             </div>
             {secsLeft != null && d.turnSeat != null && (
               <div
                 className={`font-mono text-2xl font-extrabold tabular-nums ${
-                  secsLeft <= 10 ? "text-dire" : "text-slate-strong"
+                  secsLeft <= 10 ? "anim-urgent text-dire" : "text-slate-strong"
                 }`}
               >
                 0:{String(secsLeft).padStart(2, "0")}

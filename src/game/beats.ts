@@ -4,11 +4,24 @@ import type { SimResult } from "./types";
 // Broadcast beat schedule — pure and React-free so both the solo client and
 // the multiplayer room server (which paces the reveal with DO alarms) can
 // derive the exact same sequence from a SimResult.
+//
+// The show, in order:
+//   intro        — tournament title card
+//   groupRound 0 — both group boards open at 0–0
+//   groupRound n — matchday n lands: tallies tick, rows climb and fall live
+//   groupDone    — qualification cuts stamp in (upper / lower / eliminated)
+//   round        — a bracket round is revealed (bot series land decided)
+//   clash        — VS plate for a series with a human team in it
+//   game         — one game of a human series ticks in
+//   standings    — champion ceremony + final placements
 // ---------------------------------------------------------------------------
 
 export type Beat =
-  | { kind: "group"; group: "A" | "B"; ms: number }
+  | { kind: "intro"; ms: number }
+  | { kind: "groupRound"; upTo: number; ms: number } // standings after matchdays < upTo
+  | { kind: "groupDone"; ms: number }
   | { kind: "round"; roundIdx: number; ms: number }
+  | { kind: "clash"; roundIdx: number; matchIdx: number; ms: number }
   | { kind: "game"; roundIdx: number; matchIdx: number; upTo: number; ms: number }
   | { kind: "standings"; ms: number };
 
@@ -19,24 +32,33 @@ export type Beat =
  */
 export const ROUND_SCHEDULE = [0, 3, 1, 4, 5, 2, 6, 7, 8, 9];
 
-const GROUP_MS = 2200;
-const ROUND_MS = 1800;
-const GAME_MS = 1000;
+const INTRO_MS = 1900;
+const GROUP_OPEN_MS = 1100;
+const GROUP_TICK_MS = 850; // one matchday of the live ticker
+const GROUP_DONE_MS = 2300;
+const ROUND_MS = 1700;
+const CLASH_MS = 1500; // VS plate slam for human series
+const GAME_MS = 950;
 
 export function buildBeats(result: SimResult): Beat[] {
   const beats: Beat[] = [];
-  // Reveal the group with fewer human teams first (solo: the user's group last).
-  const humanCount = { A: 0, B: 0 };
-  for (const g of result.groupAssign) if (g.team.ownerId != null) humanCount[g.group]++;
-  const order: ("A" | "B")[] = humanCount.A <= humanCount.B ? ["A", "B"] : ["B", "A"];
-  beats.push({ kind: "group", group: order[0], ms: GROUP_MS });
-  beats.push({ kind: "group", group: order[1], ms: GROUP_MS });
+  beats.push({ kind: "intro", ms: INTRO_MS });
+
+  // Live group stage: both groups tick matchday by matchday.
+  const matchdays = result.groupMatches.reduce((m, g) => Math.max(m, g.round + 1), 0);
+  beats.push({ kind: "groupRound", upTo: 0, ms: GROUP_OPEN_MS });
+  for (let day = 1; day <= matchdays; day++) {
+    beats.push({ kind: "groupRound", upTo: day, ms: GROUP_TICK_MS });
+  }
+  beats.push({ kind: "groupDone", ms: GROUP_DONE_MS });
+
   for (const roundIdx of ROUND_SCHEDULE) {
     const round = result.rounds[roundIdx];
     if (!round) continue;
     beats.push({ kind: "round", roundIdx, ms: ROUND_MS });
     round.matches.forEach((m, matchIdx) => {
       if (m.a.ownerId != null || m.b.ownerId != null) {
+        beats.push({ kind: "clash", roundIdx, matchIdx, ms: CLASH_MS });
         for (let upTo = 1; upTo <= m.games.length; upTo++) {
           beats.push({ kind: "game", roundIdx, matchIdx, upTo, ms: GAME_MS });
         }

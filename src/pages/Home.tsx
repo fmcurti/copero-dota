@@ -54,12 +54,17 @@ export default function Home() {
           name band on a cup. The one place gold lives on this screen. */}
       <div className="mx-auto mb-10 max-w-xl text-center">
         <div className="plate-rules py-4">
-          <h1 className="plate text-6xl font-extrabold leading-none text-bone">El Copero</h1>
-          <div className="plate ml-[0.5em] mt-1 text-xl tracking-[0.5em] text-slate-mid">
+          <h1 className="anim-title-in plate text-6xl font-extrabold leading-none text-bone">
+            El Copero
+          </h1>
+          <div
+            className="anim-eyebrow-in plate ml-[0.4em] mt-1 text-xl text-slate-mid"
+            style={{ animationDelay: "0.15s" }}
+          >
             del Dota
           </div>
         </div>
-        <p className="mt-3 text-sm text-slate-mid">
+        <p className="beat-in mt-3 text-sm text-slate-mid" style={{ animationDelay: "0.35s" }}>
           Draftea tu roster all-time y salí a buscar la copa.
         </p>
       </div>
@@ -67,7 +72,7 @@ export default function Home() {
       {active && (
         <button
           onClick={() => navigate("/draft")}
-          className="mb-6 w-full rounded-lg border border-bone/40 py-3 text-sm font-semibold text-bone hover:bg-ink-800"
+          className="mb-6 w-full rounded-lg border border-trophy-dim/50 py-3 text-sm font-semibold text-bone transition hover:border-trophy/60 hover:bg-ink-800"
         >
           ↳ Resume your run in progress
         </button>
@@ -133,7 +138,7 @@ export default function Home() {
 
         <button
           onClick={start}
-          className="plate w-full rounded-lg bg-bone py-4 text-xl font-bold tracking-widest text-ink-950 transition hover:bg-white"
+          className="cta-dota cta-pulse plate w-full rounded-lg py-4 text-xl font-bold tracking-widest"
         >
           Start Run
         </button>

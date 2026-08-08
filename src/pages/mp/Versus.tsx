@@ -18,12 +18,17 @@ export default function Versus() {
     <div className="mx-auto max-w-3xl">
       <div className="mx-auto mb-10 max-w-xl text-center">
         <div className="plate-rules py-4">
-          <h1 className="plate text-5xl font-extrabold leading-none text-bone">Versus</h1>
-          <div className="plate ml-[0.5em] mt-1 text-lg tracking-[0.5em] text-slate-mid">
+          <h1 className="anim-title-in plate text-5xl font-extrabold leading-none text-bone">
+            Versus
+          </h1>
+          <div
+            className="anim-eyebrow-in plate ml-[0.4em] mt-1 text-lg text-slate-mid"
+            style={{ animationDelay: "0.15s" }}
+          >
             2–8 drafters
           </div>
         </div>
-        <p className="mt-3 text-sm text-slate-mid">
+        <p className="beat-in mt-3 text-sm text-slate-mid" style={{ animationDelay: "0.35s" }}>
           Un solo Copero. Packs compartidos, players exclusivos, una simulación para todos.
         </p>
       </div>
@@ -41,7 +46,7 @@ export default function Versus() {
         <Section label="Create">
           <button
             onClick={() => navigate(`/mp/${makeRoomCode()}`)}
-            className="plate w-full rounded-lg bg-bone py-4 text-lg font-bold tracking-widest text-ink-950 transition hover:bg-white sm:w-72"
+            className="cta-dota plate w-full rounded-lg py-4 text-lg font-bold tracking-widest sm:w-72"
           >
             Create Lobby
           </button>
