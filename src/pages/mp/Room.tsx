@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Broadcast } from "../../components/Broadcast";
 import { OptionCard, Section } from "../../components/options";
 import { ovrColor } from "../../components/cards";
+import { Stinger } from "../../components/Stinger";
 import { useBundle, useHeroById } from "../../game/data";
 import { SLOT_IDS } from "../../game/draft";
 import { simulateTournament } from "../../game/sim";
@@ -29,6 +30,15 @@ export default function Room() {
   );
   const { bundle, error } = useBundle();
   const heroById = useHeroById(bundle);
+
+  // Stinger when the host fires the draft (lobby → drafting for everyone).
+  const [stinger, setStinger] = useState(false);
+  const prevPhase = useRef<string | null>(null);
+  useEffect(() => {
+    const phase = snapshot?.phase ?? null;
+    if (prevPhase.current === "lobby" && phase === "drafting") setStinger(true);
+    prevPhase.current = phase;
+  }, [snapshot?.phase]);
 
   if (locked) {
     return (
@@ -57,6 +67,14 @@ export default function Room() {
 
   return (
     <div>
+      {stinger && (
+        <Stinger
+          eyebrow={`Sala ${code}`}
+          title="El Draft"
+          sub="packs compartidos · players exclusivos"
+          onDone={() => setStinger(false)}
+        />
+      )}
       {lastError && (
         <div className="mb-4 rounded-lg border border-dire/50 bg-ink-900/70 px-4 py-2 text-sm text-dire">
           {lastError}
@@ -203,8 +221,10 @@ function LobbyView({
   return (
     <div className="mx-auto max-w-3xl space-y-8">
       <div className="plate-rules py-4 text-center">
-        <div className="plate text-sm tracking-[0.4em] text-slate-dim">Sala</div>
-        <div className="plate mt-1 text-5xl font-extrabold tracking-[0.2em] text-bone">{code}</div>
+        <div className="anim-eyebrow-in plate text-sm text-slate-dim">Sala</div>
+        <div className="anim-title-in plate mt-1 text-5xl font-extrabold tracking-[0.2em]">
+          <span className="gold-text">{code}</span>
+        </div>
         <p className="mt-2 text-xs text-slate-mid">
           pasale el código (o el link) a tus amigos — 2 a 8 drafters
         </p>
@@ -333,7 +353,11 @@ function LobbyView({
         <button
           onClick={() => send({ t: "start" })}
           disabled={!canStart}
-          className="plate w-full rounded-lg bg-bone py-4 text-xl font-bold tracking-widest text-ink-950 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-40"
+          className={`plate w-full rounded-lg py-4 text-xl font-bold tracking-widest ${
+            canStart
+              ? "cta-dota cta-pulse"
+              : "cursor-not-allowed border border-ink-700 bg-ink-900/40 text-slate-dim"
+          }`}
         >
           {canStart ? "Start Draft" : `Need ${MIN_SEATS}+ drafters`}
         </button>
@@ -472,7 +496,7 @@ function AssembledView({
       {isHost ? (
         <button
           onClick={() => send({ t: "play" })}
-          className="plate w-full rounded-lg bg-bone py-4 text-xl font-bold tracking-widest text-ink-950 transition hover:bg-white"
+          className="cta-dota cta-pulse plate w-full rounded-lg py-4 text-xl font-bold tracking-widest"
         >
           Play The International
         </button>
@@ -605,7 +629,7 @@ function BroadcastView({
             {isHost && (
               <button
                 onClick={() => navigate(`/mp/${makeRoomCode()}`)}
-                className="plate flex-1 rounded-lg bg-bone py-3 text-base font-bold tracking-widest text-ink-950 hover:bg-white"
+                className="cta-dota plate flex-1 rounded-lg py-3 text-base font-bold tracking-widest"
               >
                 Rematch (new room)
               </button>

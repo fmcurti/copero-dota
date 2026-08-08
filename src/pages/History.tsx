@@ -22,13 +22,15 @@ export default function History() {
       {history.map((r) => (
         <div
           key={`${r.id}-${r.date}`}
-          className={`rounded-xl border p-4 ${
-            r.place === 1 ? "border-trophy-dim/60 bg-ink-900/60" : "border-ink-700 bg-ink-900/40"
+          className={`panel rounded-xl p-4 ${
+            r.place === 1
+              ? "border-trophy-dim/60 shadow-[0_0_22px_rgba(212,175,55,0.08)]"
+              : ""
           }`}
         >
           <div className="flex items-baseline justify-between">
             <div className="text-lg font-bold">
-              <span className={r.place === 1 ? "text-trophy" : "text-bone"}>
+              <span className={`plate ${r.place === 1 ? "gold-text" : "text-bone"}`}>
                 {r.place === 1 ? "🏆 Campeón" : ordinal(r.place)}
               </span>
               {r.undefeated && (

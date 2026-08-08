@@ -8,6 +8,7 @@ import { buildBeats, type Beat } from "../src/game/beats";
 import { fetchBundle } from "../src/game/bundle";
 import { buildCardPool } from "../src/game/cards";
 import { generateFieldMulti } from "../src/game/field";
+import { luckTraitFor } from "../src/game/luck";
 import { randomSeed } from "../src/game/rng";
 import { simulateTournament } from "../src/game/sim";
 import { computeStrength, swapHeroAssignment } from "../src/game/strength";
@@ -477,6 +478,7 @@ export class CoperoRoom extends Server<Env> {
         ownerId: s.playerId,
         name: s.name,
         strength: strengths[i].overall,
+        luck: luckTraitFor(boardRoster(e.boards[i])),
       })),
       this.room.fieldSeed!,
     );

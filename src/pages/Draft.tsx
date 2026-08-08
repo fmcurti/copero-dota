@@ -1,12 +1,14 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Broadcast } from "../components/Broadcast";
 import { CardButton, HeroCardContent, PlayerCardContent } from "../components/cards";
 import { RosterBoard } from "../components/RosterBoard";
+import { Stinger } from "../components/Stinger";
 import { buildCardPool } from "../game/cards";
 import { eventShortName, useBundle, useHeroById } from "../game/data";
 import { SLOT_IDS, canPickHero, canPickPlayer, isComplete, pickedIds } from "../game/draft";
 import { FIELD_REROLL_EXCUSES, fieldRank, generateField } from "../game/field";
+import { luckTraitFor } from "../game/luck";
 import { randomSeed } from "../game/rng";
 import { simulateTournament } from "../game/sim";
 import { useRunStore } from "../game/store";
@@ -32,7 +34,7 @@ function ManualAssign({
 }) {
   const heroById = useHeroById(useBundle().bundle);
   return (
-    <div className="mt-4 rounded-xl border border-ink-700 bg-ink-900/40 p-4">
+    <div className="panel mt-4 rounded-xl p-4">
       <div className="plate mb-2 text-sm tracking-widest text-slate-dim">
         Hero Assignment (manual)
       </div>
@@ -93,12 +95,16 @@ export default function Draft() {
     [bundle, config.format, config.cardMode],
   );
 
+  // Opening stinger for a fresh run — the first pack deals in as it fades.
+  const [stinger, setStinger] = useState(false);
+
   useEffect(() => {
     if (!bundle || !pool.length) return;
     if (active) return;
     if (pendingStart) {
       setPendingStart(false);
       startRun(pool);
+      setStinger(true);
       return;
     }
     navigate("/");
@@ -135,9 +141,10 @@ export default function Draft() {
     setHeroAssign(next);
   }, [bundle, manual, complete, heroAssign, roster, heroes, setHeroAssign]);
 
+  const luck = useMemo(() => luckTraitFor(roster), [roster]);
   const field = useMemo(
-    () => generateField(strength.overall, teamName || "Your Team", fieldSeed),
-    [strength.overall, teamName, fieldSeed],
+    () => generateField(strength.overall, teamName || "Your Team", fieldSeed, luck),
+    [strength.overall, teamName, fieldSeed, luck],
   );
   const result = useMemo(
     () => (simSeed != null ? simulateTournament(field, simSeed) : null),
@@ -202,7 +209,7 @@ export default function Draft() {
             </button>
             <button
               onClick={newRun}
-              className="plate flex-1 rounded-lg bg-bone py-3 text-base font-bold tracking-widest text-ink-950 hover:bg-white"
+              className="cta-dota plate flex-1 rounded-lg py-3 text-base font-bold tracking-widest"
             >
               New draft
             </button>
@@ -214,6 +221,14 @@ export default function Draft() {
 
   return (
     <div className="grid grid-cols-1 gap-8 lg:grid-cols-[2fr_3fr]">
+      {stinger && (
+        <Stinger
+          eyebrow="El Copero del Dota"
+          title={teamName || "Your Team"}
+          sub="5 pros · 5 héroes · un Aegis"
+          onDone={() => setStinger(false)}
+        />
+      )}
       <section>
         <RosterBoard slots={slots} heroes={heroes} strength={strength} heroById={heroById} />
         {manual && complete && (
@@ -227,16 +242,19 @@ export default function Draft() {
       </section>
 
       <section>
-        {!complete && current && (
+        {!complete && current && !stinger && (
           <div>
-            <div className="mb-3 flex items-center justify-between">
-              <div>
-                <div className="plate text-sm tracking-widest text-slate-dim">
+            <div className="mb-4 flex items-end justify-between gap-3">
+              {/* pack banner — slams in with every fresh pack */}
+              <div key={current.id} className="anim-slam-l min-w-0">
+                <div className="plate text-xs tracking-[0.3em] text-slate-dim">
                   Pack — pick one card
                 </div>
-                <div className="text-lg font-bold text-bone">
-                  {current.teamName}
-                  <span className="ml-2 text-sm font-normal text-slate-dim">
+                <div className="angled-l mt-1 inline-flex max-w-full items-baseline gap-2 border-l-2 border-trophy-dim bg-ink-800/90 py-1.5 pl-3 pr-6">
+                  <span className="plate-italic truncate text-xl leading-none text-bone sm:text-2xl">
+                    {current.teamName}
+                  </span>
+                  <span className="shrink-0 text-xs text-slate-mid">
                     {eventShortName(bundle, current.eventId)}
                     {current.placement != null && <> · finished {ordinal(current.placement)}</>}
                   </span>
@@ -245,7 +263,7 @@ export default function Draft() {
               <button
                 onClick={() => reroll(pool)}
                 disabled={rerollsLeft <= 0}
-                className={`rounded-lg border px-4 py-2 text-sm font-semibold ${
+                className={`shrink-0 rounded-lg border px-4 py-2 text-sm font-semibold transition ${
                   rerollsLeft > 0
                     ? "border-ink-600 text-slate-strong hover:border-slate-mid hover:text-bone"
                     : "cursor-not-allowed border-ink-700 text-slate-dim"
@@ -292,7 +310,7 @@ export default function Draft() {
         )}
 
         {complete && !result && (
-          <div className="rounded-xl border border-ink-700 bg-ink-900/40 p-5">
+          <div className="panel beat-in rounded-xl p-5">
             <div className="plate text-sm tracking-widest text-slate-dim">
               The International — Field of 18
             </div>
@@ -320,7 +338,7 @@ export default function Draft() {
             <div className="mt-4 flex gap-3">
               <button
                 onClick={simulate}
-                className="plate flex-1 rounded-lg bg-bone py-3 text-lg font-bold tracking-widest text-ink-950 hover:bg-white"
+                className="cta-dota cta-pulse plate flex-1 rounded-lg py-3 text-lg font-bold tracking-widest"
               >
                 Play The International
               </button>

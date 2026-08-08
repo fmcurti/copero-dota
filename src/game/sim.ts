@@ -28,20 +28,37 @@ export function winProb(a: SimTeam, b: SimTeam): number {
   return 1 / (1 + Math.pow(10, -(a.strength - b.strength) / ELO_DIVISOR));
 }
 
+/**
+ * One game. Luck traits roll per game BEFORE the result: a proc takes the
+ * game outright — la suerte del carreado doesn't negotiate with Elo. If both
+ * sides proc, the luck cancels and the game resolves normally. rng is
+ * consumed only for sides that carry a trait, so trait-free sims draw the
+ * same stream.
+ */
+function playGame(
+  a: SimTeam,
+  b: SimTeam,
+  rng: Rng,
+): { winner: "a" | "b"; luck: { a: boolean; b: boolean } } {
+  const luckA = a.luck != null && rng() < a.luck.chance;
+  const luckB = b.luck != null && rng() < b.luck.chance;
+  const luck = { a: luckA, b: luckB };
+  if (luckA !== luckB) return { winner: luckA ? "a" : "b", luck };
+  return { winner: rng() < winProb(a, b) ? "a" : "b", luck };
+}
+
 function playSeries(id: string, a: SimTeam, b: SimTeam, bestOf: number, rng: Rng): BracketMatch {
   const need = Math.ceil(bestOf / 2);
   let winsA = 0;
   let winsB = 0;
   const games: ("a" | "b")[] = [];
-  const p = winProb(a, b);
+  const luckGames: { a: boolean; b: boolean }[] = [];
   while (winsA < need && winsB < need) {
-    if (rng() < p) {
-      winsA++;
-      games.push("a");
-    } else {
-      winsB++;
-      games.push("b");
-    }
+    const g = playGame(a, b, rng);
+    if (g.winner === "a") winsA++;
+    else winsB++;
+    games.push(g.winner);
+    luckGames.push(g.luck);
   }
   const aWon = winsA > winsB;
   return {
@@ -54,6 +71,7 @@ function playSeries(id: string, a: SimTeam, b: SimTeam, bestOf: number, rng: Rng
     loser: aWon ? b : a,
     bestOf,
     games,
+    ...(a.luck || b.luck ? { luckGames } : {}),
   };
 }
 
@@ -88,14 +106,26 @@ function playGroup(
       const a = teams[ai];
       const b = teams[bi];
       const games: ("a" | "b")[] = [];
-      const p = winProb(a, b);
-      for (let g = 0; g < 2; g++) games.push(rng() < p ? "a" : "b");
+      const luckGames: { a: boolean; b: boolean }[] = [];
+      for (let g = 0; g < 2; g++) {
+        const played = playGame(a, b, rng);
+        games.push(played.winner);
+        luckGames.push(played.luck);
+      }
       const aWins = games.filter((g) => g === "a").length;
       wins.set(a.id, wins.get(a.id)! + aWins);
       wins.set(b.id, wins.get(b.id)! + (2 - aWins));
       losses.set(a.id, losses.get(a.id)! + (2 - aWins));
       losses.set(b.id, losses.get(b.id)! + aWins);
-      return { id: `g${label}-${r}-${m}`, group: label, a, b, games };
+      return {
+        id: `g${label}-${r}-${m}`,
+        group: label,
+        round: r,
+        a,
+        b,
+        games,
+        ...(a.luck || b.luck ? { luckGames } : {}),
+      };
     }),
   );
   const standings = teams

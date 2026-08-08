@@ -1,5 +1,5 @@
 import { clamp, gaussian, mulberry32, type Rng } from "./rng";
-import type { SimTeam } from "./types";
+import type { LuckTrait, SimTeam } from "./types";
 
 // ---------------------------------------------------------------------------
 // The tournament field: your team + 17 AI teams with strength ~ N(86, 5)
@@ -117,6 +117,8 @@ export interface HumanSeed {
   ownerId: string;
   name: string;
   strength: number;
+  /** Per-game luck trait carried by this roster (e.g. musu). */
+  luck?: LuckTrait;
 }
 
 /**
@@ -149,13 +151,19 @@ export function generateFieldMulti(
     strength: Math.round(h.strength),
     isUser: false,
     ownerId: h.ownerId,
+    ...(h.luck ? { luck: h.luck } : {}),
   }));
   return [...humanTeams, ...opponents];
 }
 
-export function generateField(userStrength: number, teamName: string, fieldSeed: number): SimTeam[] {
+export function generateField(
+  userStrength: number,
+  teamName: string,
+  fieldSeed: number,
+  luck?: LuckTrait,
+): SimTeam[] {
   return generateFieldMulti(
-    [{ ownerId: "solo", name: teamName, strength: userStrength }],
+    [{ ownerId: "solo", name: teamName, strength: userStrength, luck }],
     fieldSeed,
     AI_MEAN,
   ).map((t) => (t.ownerId === "solo" ? { ...t, id: "user", isUser: true } : t));
