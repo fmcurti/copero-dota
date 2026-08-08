@@ -13,6 +13,8 @@ import type { SimResult } from "./types";
 //   round        — a bracket round is revealed (bot series land decided)
 //   clash        — VS plate for a series with a human team in it
 //   game         — one game of a human series ticks in
+//   taunt        — human-vs-human series just ended: hold for the winner's
+//                  victory phrase (and let the result breathe)
 //   standings    — champion ceremony + final placements
 // ---------------------------------------------------------------------------
 
@@ -23,6 +25,7 @@ export type Beat =
   | { kind: "round"; roundIdx: number; ms: number }
   | { kind: "clash"; roundIdx: number; matchIdx: number; ms: number }
   | { kind: "game"; roundIdx: number; matchIdx: number; upTo: number; ms: number }
+  | { kind: "taunt"; roundIdx: number; matchIdx: number; ms: number }
   | { kind: "standings"; ms: number };
 
 /**
@@ -39,6 +42,7 @@ const GROUP_DONE_MS = 2300;
 const ROUND_MS = 1700;
 const CLASH_MS = 1500; // VS plate slam for human series
 const GAME_MS = 950;
+const TAUNT_MS = 2800; // hold on a human-vs-human result for the victory phrase
 
 export function buildBeats(result: SimResult): Beat[] {
   const beats: Beat[] = [];
@@ -61,6 +65,9 @@ export function buildBeats(result: SimResult): Beat[] {
         beats.push({ kind: "clash", roundIdx, matchIdx, ms: CLASH_MS });
         for (let upTo = 1; upTo <= m.games.length; upTo++) {
           beats.push({ kind: "game", roundIdx, matchIdx, upTo, ms: GAME_MS });
+        }
+        if (m.a.ownerId != null && m.b.ownerId != null) {
+          beats.push({ kind: "taunt", roundIdx, matchIdx, ms: TAUNT_MS });
         }
       }
     });

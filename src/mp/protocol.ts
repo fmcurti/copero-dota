@@ -35,6 +35,19 @@ export const MIN_SEATS = 2;
 export const MAX_SEATS = 8;
 export const DENIES_PER_GAME = 1;
 
+export const MAX_WIN_PHRASES = 8;
+export const MAX_WIN_PHRASE_LEN = 120;
+
+/** Shared client/server cleanup for victory phrases (single line, capped). */
+export function sanitizeWinPhrases(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  return input
+    .filter((p): p is string => typeof p === "string")
+    .map((p) => p.replace(/\s+/g, " ").trim().slice(0, MAX_WIN_PHRASE_LEN))
+    .filter(Boolean)
+    .slice(0, MAX_WIN_PHRASES);
+}
+
 export interface Seat {
   playerId: string;
   name: string;
@@ -89,11 +102,18 @@ export interface RoomSnapshot {
   simSeed: number | null;
   // broadcasting →
   beat: { idx: number; playing: boolean } | null;
+  /**
+   * The victory phrase for the current taunt beat, if any. Phrases live only
+   * on the server — this is the single moment one is ever sent to clients.
+   */
+  taunt?: { ownerId: string; phrase: string } | null;
 }
 
 export type ClientMsg =
   | { t: "configure"; config: Partial<MpConfig> } // host, lobby only
   | { t: "rename"; name: string } // own seat, lobby only
+  | { t: "phrases"; phrases: string[] } // own seat, any phase
+
   | { t: "spectate" } // vacate own seat, lobby only
   | { t: "takeSeat" } // claim an open seat, lobby only
   | { t: "start" } // host, needs MIN_SEATS+

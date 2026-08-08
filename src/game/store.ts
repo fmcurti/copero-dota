@@ -28,6 +28,9 @@ interface RunState {
   recordRun: (r: RunRecord) => void;
   teamName: string;
   setTeamName: (n: string) => void;
+  /** Victory taunts for versus — shown when you take a series off another drafter. */
+  winPhrases: string[];
+  setWinPhrases: (p: string[]) => void;
   pendingStart: boolean;
   setPendingStart: (v: boolean) => void;
 
@@ -61,6 +64,8 @@ export const useRunStore = create<RunState>()(
       recordRun: (r) => set((s) => ({ history: [r, ...s.history].slice(0, 50) })),
       teamName: "Your Team",
       setTeamName: (n) => set({ teamName: n }),
+      winPhrases: [],
+      setWinPhrases: (p) => set({ winPhrases: p }),
       pendingStart: false,
       setPendingStart: (v) => set({ pendingStart: v }),
 

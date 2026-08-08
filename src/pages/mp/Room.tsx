@@ -20,6 +20,7 @@ import {
   type RoomSnapshot,
   type Seat,
 } from "../../mp/protocol";
+import { WinPhrasesEditor } from "../../components/WinPhrases";
 import { DraftView } from "./DraftView";
 import { useRoom } from "./useRoom";
 
@@ -41,6 +42,15 @@ export default function Room() {
     if (prevPhase.current === "lobby" && phase === "drafting") setStinger(true);
     prevPhase.current = phase;
   }, [snapshot?.phase]);
+
+  // Sync my victory phrases to my seat (the server rejects them while unseated).
+  const winPhrases = useRunStore((s) => s.winPhrases);
+  const seated = snapshot?.seats.some((s) => s.playerId === playerId) ?? false;
+  const phrasesKey = winPhrases.join("\n");
+  useEffect(() => {
+    if (!seated) return;
+    send({ t: "phrases", phrases: phrasesKey ? phrasesKey.split("\n") : [] });
+  }, [seated, phrasesKey, send]);
 
   if (locked) {
     return (
@@ -251,6 +261,12 @@ function LobbyView({
           </div>
         ))}
       </div>
+
+      {!isSpectator && (
+        <Section label="Win Phrases — optional">
+          <WinPhrasesEditor />
+        </Section>
+      )}
 
       <div className="flex justify-center">
         {isSpectator ? (
@@ -595,6 +611,7 @@ function BroadcastView({
       result={result}
       teamName={myName}
       perspectiveOwnerId={playerId}
+      serverTaunt={snapshot.taunt}
       controlled={{ idx: beat.idx, playing: beat.playing }}
       onControl={isHost ? (action) => send({ t: "beat", action }) : undefined}
       footer={

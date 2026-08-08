@@ -464,11 +464,14 @@ function ClashStrip({
   m,
   roundName,
   shown,
+  taunt,
   hl,
 }: {
   m: BracketMatch;
   roundName: string;
   shown: number;
+  /** The winner's victory phrase, shown once the series is over. */
+  taunt: string | null;
   hl: (t: SimTeam) => Highlight;
 }) {
   const scoreA = m.games.slice(0, shown).filter((g) => g === "a").length;
@@ -535,6 +538,19 @@ function ClashStrip({
             <span className="anim-stamp plate inline-block rounded-sm border border-radiant-dim/70 bg-ink-950/90 px-3 py-0.5 text-xs tracking-widest text-radiant">
               {m.winner.name} se lleva la serie
             </span>
+          </div>
+        )}
+        {taunt && (
+          <div className="anim-taunt mt-2 text-center">
+            <div
+              className="plate-italic inline-block max-w-full truncate rounded-md border-2 border-dire bg-ink-950/95 px-6 py-2.5 text-xl normal-case text-bone sm:text-2xl"
+              style={{ boxShadow: "0 0 30px rgba(226, 87, 70, 0.4)" }}
+            >
+              {taunt}
+            </div>
+            <div className="mt-1.5 text-[10px] uppercase tracking-[0.35em] text-slate-mid">
+              — {m.winner.name}
+            </div>
           </div>
         )}
       </div>
@@ -632,6 +648,7 @@ export function Broadcast({
   controlled,
   onControl,
   perspectiveOwnerId,
+  serverTaunt,
 }: {
   result: SimResult;
   teamName: string;
@@ -642,6 +659,11 @@ export function Broadcast({
   onControl?: (action: "pause" | "resume" | "skip") => void;
   /** Whose dots perspective and champion-plate line (defaults to the isUser team). */
   perspectiveOwnerId?: string;
+  /**
+   * Versus mode: the winner's victory phrase for the current taunt beat.
+   * Phrases are server-side secrets; this is the only one clients ever get.
+   */
+  serverTaunt?: { ownerId: string; phrase: string } | null;
 }) {
   const beats = useMemo(() => buildBeats(result), [result]);
   const [localIdx, setLocalIdx] = useState(0);
@@ -698,10 +720,17 @@ export function Broadcast({
     }
   }
   const clash =
-    !done && (cur.kind === "clash" || cur.kind === "game")
+    !done && (cur.kind === "clash" || cur.kind === "game" || cur.kind === "taunt")
       ? { roundIdx: cur.roundIdx, matchIdx: cur.matchIdx }
       : null;
   const clashMatch = clash ? result.rounds[clash.roundIdx]?.matches[clash.matchIdx] : null;
+
+  // Victory phrase: the server resolves it for the current taunt beat and
+  // sends exactly one — sanity-check it belongs to this match's winner.
+  const taunt =
+    cur.kind === "taunt" && clashMatch && serverTaunt?.ownerId === clashMatch.winner.ownerId
+      ? serverTaunt.phrase
+      : null;
 
   const phaseLabel = done
     ? "Ceremonia"
@@ -857,7 +886,12 @@ export function Broadcast({
           key={`${clash.roundIdx}-${clash.matchIdx}`}
           m={clashMatch}
           roundName={result.rounds[clash.roundIdx].name}
-          shown={humanGames.get(`${clash.roundIdx}-${clash.matchIdx}`) ?? 0}
+          shown={
+            cur.kind === "taunt"
+              ? clashMatch.games.length
+              : (humanGames.get(`${clash.roundIdx}-${clash.matchIdx}`) ?? 0)
+          }
+          taunt={taunt}
           hl={hl}
         />
       )}
