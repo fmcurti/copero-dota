@@ -546,7 +546,7 @@ function ClashStrip({
               className="plate-italic inline-block max-w-full truncate rounded-md border-2 border-dire bg-ink-950/95 px-6 py-2.5 text-xl normal-case text-bone sm:text-2xl"
               style={{ boxShadow: "0 0 30px rgba(226, 87, 70, 0.4)" }}
             >
-              “{taunt}”
+              {taunt}
             </div>
             <div className="mt-1.5 text-[10px] uppercase tracking-[0.35em] text-slate-mid">
               — {m.winner.name}
