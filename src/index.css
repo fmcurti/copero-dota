@@ -428,25 +428,43 @@ body::before {
   animation: sweep 0.8s ease-out 0.15s both;
 }
 
-/* Victory taunt — trash talk slams down and settles at a cocky angle. */
-@keyframes taunt-in {
-  from {
+/* Victory taunt — "Tinta y oro": an ink scream bubble with an engraved gold
+   jagged edge, drawn at runtime as seeded SVG (Broadcast's ScreamBubble).
+   Pops in with overshoot, rage-shakes, settles at a tilt. */
+.grito {
+  position: relative;
+  display: inline-block;
+  filter: drop-shadow(0 14px 22px rgba(0, 0, 0, 0.6));
+}
+@keyframes scream-in {
+  0% {
     opacity: 0;
-    transform: translateY(-22px) rotate(-5deg) scale(1.6);
-    filter: blur(4px);
+    transform: scale(0.15) rotate(-14deg);
   }
   55% {
     opacity: 1;
-    transform: translateY(0) rotate(1.5deg) scale(0.96);
-    filter: blur(0);
+    transform: scale(1.13) rotate(2.5deg);
   }
-  to {
+  74% {
+    transform: scale(0.94) rotate(-2deg);
+  }
+  100% {
     opacity: 1;
-    transform: rotate(-1deg) scale(1);
+    transform: scale(1) rotate(-1.2deg);
   }
 }
-.anim-taunt {
-  animation: taunt-in 0.5s cubic-bezier(0.2, 1.1, 0.3, 1) 0.25s both;
+@keyframes scream-shake {
+  from {
+    transform: rotate(-2deg) translateX(-1px);
+  }
+  to {
+    transform: rotate(0.6deg) translateX(1px);
+  }
+}
+.anim-scream {
+  animation:
+    scream-in 0.5s cubic-bezier(0.2, 1.3, 0.35, 1) 0.22s both,
+    scream-shake 0.13s ease-in-out 0.7s 6 alternate;
 }
 
 /* Seal stamp — the 322-0 and qualification marks. */

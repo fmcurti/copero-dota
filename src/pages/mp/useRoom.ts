@@ -43,6 +43,15 @@ export function useRoom(code: string, name: string) {
     },
   });
 
+  // Bumps on every (re)connect — lets effects re-sync state the server may
+  // have never received (e.g. win phrases sent to a worker that restarted).
+  const [opens, setOpens] = useState(0);
+  useEffect(() => {
+    const onOpen = () => setOpens((n) => n + 1);
+    socket.addEventListener("open", onOpen);
+    return () => socket.removeEventListener("open", onOpen);
+  }, [socket]);
+
   useEffect(() => {
     if (!lastError) return;
     const t = setTimeout(() => setLastError(null), 3500);
@@ -58,7 +67,7 @@ export function useRoom(code: string, name: string) {
     localStorage.removeItem(spectatorKey(code));
     socket.send(JSON.stringify({ t: "takeSeat" } satisfies ClientMsg));
   }, [code, socket]);
-  return { playerId, snapshot, send, spectate, takeSeat, lastError, locked };
+  return { playerId, snapshot, send, spectate, takeSeat, lastError, locked, opens };
 }
 
 /** Re-renders on an interval — for countdowns. */
