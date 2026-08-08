@@ -199,9 +199,14 @@ body::before {
   }
 }
 
+/* Focus — the element's own edge warms to gold with a soft bloom, like a
+   selected plate in the Dota HUD. No detached ring, no layout shift. */
 :focus-visible {
-  outline: 2px solid var(--color-bone);
-  outline-offset: 2px;
+  outline: 1px solid color-mix(in srgb, var(--color-trophy) 75%, transparent);
+  outline-offset: -1px;
+  box-shadow:
+    0 0 10px rgba(212, 175, 55, 0.25),
+    inset 0 0 8px rgba(212, 175, 55, 0.08);
 }
 
 /* ------------------------------- motion ---------------------------------- */
