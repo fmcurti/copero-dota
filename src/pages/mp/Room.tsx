@@ -27,7 +27,7 @@ import { useRoom } from "./useRoom";
 export default function Room() {
   const { code = "" } = useParams();
   const teamName = useRunStore((s) => s.teamName);
-  const { playerId, snapshot, send, spectate, takeSeat, lastError, locked } = useRoom(
+  const { playerId, snapshot, send, spectate, takeSeat, lastError, locked, opens } = useRoom(
     code,
     teamName || "Your Team",
   );
@@ -43,14 +43,19 @@ export default function Room() {
     prevPhase.current = phase;
   }, [snapshot?.phase]);
 
-  // Sync my victory phrases to my seat (the server rejects them while unseated).
+  // Sync my victory phrases to my seat (the server rejects them while
+  // unseated). Re-fires on EVERY socket open: a reconnect can mean the server
+  // restarted (deploy, eviction) or an earlier send was never accepted —
+  // without the re-send, the room would stay phraseless forever.
   const winPhrases = useRunStore((s) => s.winPhrases);
   const seated = snapshot?.seats.some((s) => s.playerId === playerId) ?? false;
   const phrasesKey = winPhrases.join("\n");
   useEffect(() => {
     if (!seated) return;
+    // `opens` is a dep purely to re-fire after reconnects; partysocket
+    // buffers sends while connecting, so firing "early" is always safe.
     send({ t: "phrases", phrases: phrasesKey ? phrasesKey.split("\n") : [] });
-  }, [seated, phrasesKey, send]);
+  }, [seated, phrasesKey, send, opens]);
 
   if (locked) {
     return (
