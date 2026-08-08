@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Broadcast } from "../components/Broadcast";
+import { DEV_TAUNT_ALL } from "../game/beats";
 import { CardButton, HeroCardContent, PlayerCardContent } from "../components/cards";
 import { RosterBoard } from "../components/RosterBoard";
 import { Stinger } from "../components/Stinger";
@@ -194,11 +195,19 @@ export default function Draft() {
   };
 
   if (result) {
+    // Dev preview: solo taunts on every series you win, using your saved
+    // phrases (or stand-ins) — lets the animation be tested without a lobby.
+    const devPhrases = DEV_TAUNT_ALL
+      ? useRunStore.getState().winPhrases.length
+        ? useRunStore.getState().winPhrases
+        : ["EZ GAME EZ LIFE", "gg no re", "¿Eso es todo?"]
+      : undefined;
     return (
       <Broadcast
         key={result.seed}
         result={result}
         teamName={teamName || "Your Team"}
+        localTauntPhrases={devPhrases}
         footer={
           <div className="flex gap-3">
             <button

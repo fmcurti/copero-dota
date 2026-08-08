@@ -4,7 +4,7 @@ import {
   type Connection,
   type ConnectionContext,
 } from "partyserver";
-import { buildBeats, type Beat } from "../src/game/beats";
+import { DEV_TAUNT_ALL, buildBeats, type Beat } from "../src/game/beats";
 import { fetchBundle } from "../src/game/bundle";
 import { buildCardPool } from "../src/game/cards";
 import { generateFieldMulti } from "../src/game/field";
@@ -184,7 +184,8 @@ export class CoperoRoom extends Server<Env> {
     if (b.kind !== "taunt") return null;
     const m = this.simResult?.rounds[b.roundIdx]?.matches[b.matchIdx];
     const ownerId = m?.winner.ownerId;
-    if (!m || ownerId == null || m.loser.ownerId == null) return null;
+    // dev preview taunts every human win; prod requires a human loser too
+    if (!m || ownerId == null || (!DEV_TAUNT_ALL && m.loser.ownerId == null)) return null;
     const phrases = r.phrases[ownerId];
     if (!phrases?.length) return null;
     const pick = ((r.simSeed >>> 0) + b.roundIdx * 1009 + b.matchIdx * 101) % phrases.length;

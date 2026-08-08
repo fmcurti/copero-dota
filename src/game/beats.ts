@@ -35,6 +35,17 @@ export type Beat =
  */
 export const ROUND_SCHEDULE = [0, 3, 1, 4, 5, 2, 6, 7, 8, 9];
 
+/**
+ * Dev preview: under `npm run dev` (vite sets DEV for the client AND the
+ * worker, so both sides always agree), taunt beats follow EVERY series a
+ * human wins — including vs bots and in solo — so victory phrases can be
+ * tested without needing two drafters to meet in the bracket. Production
+ * builds compile this to false: taunts stay human-vs-human only.
+ */
+export const DEV_TAUNT_ALL = Boolean(
+  (import.meta as { env?: { DEV?: boolean } }).env?.DEV,
+);
+
 const INTRO_MS = 1900;
 const GROUP_OPEN_MS = 1100;
 const GROUP_TICK_MS = 850; // one matchday of the live ticker
@@ -44,7 +55,7 @@ const CLASH_MS = 1500; // VS plate slam for human series
 const GAME_MS = 950;
 const TAUNT_MS = 2800; // hold on a human-vs-human result for the victory phrase
 
-export function buildBeats(result: SimResult): Beat[] {
+export function buildBeats(result: SimResult, tauntAll: boolean = DEV_TAUNT_ALL): Beat[] {
   const beats: Beat[] = [];
   beats.push({ kind: "intro", ms: INTRO_MS });
 
@@ -66,7 +77,10 @@ export function buildBeats(result: SimResult): Beat[] {
         for (let upTo = 1; upTo <= m.games.length; upTo++) {
           beats.push({ kind: "game", roundIdx, matchIdx, upTo, ms: GAME_MS });
         }
-        if (m.a.ownerId != null && m.b.ownerId != null) {
+        const tauntable = tauntAll
+          ? m.winner.ownerId != null // dev preview: any series a human wins
+          : m.a.ownerId != null && m.b.ownerId != null;
+        if (tauntable) {
           beats.push({ kind: "taunt", roundIdx, matchIdx, ms: TAUNT_MS });
         }
       }

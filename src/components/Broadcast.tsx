@@ -541,14 +541,17 @@ function ClashStrip({
           </div>
         )}
         {taunt && (
-          <div className="anim-taunt mt-2 text-center">
-            <div
-              className="plate-italic inline-block max-w-full truncate rounded-md border-2 border-dire bg-ink-950/95 px-6 py-2.5 text-xl normal-case text-bone sm:text-2xl"
-              style={{ boxShadow: "0 0 30px rgba(226, 87, 70, 0.4)" }}
-            >
-              {taunt}
+          <div className="anim-scream mt-3 flex flex-col items-center">
+            <div className="scream relative">
+              {/* tail bursts toward the winner's plate */}
+              <span
+                className={`scream-tail ${aWon ? "left-[14%]" : "right-[14%] -scale-x-100"}`}
+              />
+              <div className="scream-shape plate-italic max-w-[76vw] truncate text-xl normal-case sm:max-w-[560px] sm:text-2xl">
+                {taunt}
+              </div>
             </div>
-            <div className="mt-1.5 text-[10px] uppercase tracking-[0.35em] text-slate-mid">
+            <div className="mt-2 text-[10px] uppercase tracking-[0.35em] text-slate-mid">
               — {m.winner.name}
             </div>
           </div>
@@ -649,6 +652,7 @@ export function Broadcast({
   onControl,
   perspectiveOwnerId,
   serverTaunt,
+  localTauntPhrases,
 }: {
   result: SimResult;
   teamName: string;
@@ -664,6 +668,11 @@ export function Broadcast({
    * Phrases are server-side secrets; this is the only one clients ever get.
    */
   serverTaunt?: { ownerId: string; phrase: string } | null;
+  /**
+   * Dev preview (solo): phrases to taunt with locally when there is no room
+   * server resolving them. Only passed under `npm run dev`.
+   */
+  localTauntPhrases?: string[];
 }) {
   const beats = useMemo(() => buildBeats(result), [result]);
   const [localIdx, setLocalIdx] = useState(0);
@@ -727,10 +736,19 @@ export function Broadcast({
 
   // Victory phrase: the server resolves it for the current taunt beat and
   // sends exactly one — sanity-check it belongs to this match's winner.
-  const taunt =
-    cur.kind === "taunt" && clashMatch && serverTaunt?.ownerId === clashMatch.winner.ownerId
-      ? serverTaunt.phrase
-      : null;
+  // Solo dev preview: no server, pick locally with the same seed formula.
+  let taunt: string | null = null;
+  if (cur.kind === "taunt" && clashMatch) {
+    if (serverTaunt?.ownerId === clashMatch.winner.ownerId) {
+      taunt = serverTaunt.phrase;
+    } else if (!serverTaunt && localTauntPhrases?.length && clashMatch.winner.ownerId != null) {
+      taunt =
+        localTauntPhrases[
+          ((result.seed >>> 0) + cur.roundIdx * 1009 + cur.matchIdx * 101) %
+            localTauntPhrases.length
+        ];
+    }
+  }
 
   const phaseLabel = done
     ? "Ceremonia"
