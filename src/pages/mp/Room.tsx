@@ -12,7 +12,9 @@ import type { Hero, SimResult } from "../../game/types";
 import {
   MAX_SEATS,
   MIN_SEATS,
+  NAME_MAX,
   makeRoomCode,
+  sanitizeName,
   type ClientMsg,
   type MpConfig,
   type RoomSnapshot,
@@ -151,11 +153,13 @@ function SeatPlate({ seat }: { seat: Seat }) {
 function MySeatPlate({ seat, onRename }: { seat: Seat; onRename: (name: string) => void }) {
   const [value, setValue] = useState(seat.name);
   const commit = () => {
-    const name = value.trim().slice(0, 30);
+    const name = sanitizeName(value);
     if (!name) {
       setValue(seat.name);
       return;
     }
+    // Show what the server will actually store, so a stripped "(you)" is visible.
+    setValue(name);
     if (name !== seat.name) onRename(name);
   };
   return (
@@ -168,7 +172,7 @@ function MySeatPlate({ seat, onRename }: { seat: Seat; onRename: (name: string) 
         onChange={(e) => setValue(e.target.value)}
         onBlur={commit}
         onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
-        maxLength={30}
+        maxLength={NAME_MAX}
         title="Edit your team name"
         className="min-w-0 flex-1 rounded-sm bg-transparent text-sm font-bold text-bone outline-none placeholder:text-slate-dim focus:bg-ink-900/60"
       />

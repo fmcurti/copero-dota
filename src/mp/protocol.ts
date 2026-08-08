@@ -109,6 +109,29 @@ export type ServerMsg =
   | { t: "snapshot"; room: RoomSnapshot }
   | { t: "error"; code: string; msg: string };
 
+export const NAME_MAX = 30;
+export const DEFAULT_NAME = "Sin Nombre";
+
+/**
+ * The boards rail marks your own team with a trailing "(you)". A team that
+ * puts it in its own name reads as everyone's own board, so it's not allowed
+ * — matched loosely enough that case and padding don't get around it.
+ */
+const YOU_TAG = /\(\s*you\s*\)/i;
+
+export function hasYouTag(raw: string): boolean {
+  return YOU_TAG.test(raw);
+}
+
+/** Trim, strip the impersonation tag, collapse whitespace, cap length. */
+export function sanitizeName(raw: string): string {
+  return raw
+    .replace(new RegExp(YOU_TAG.source, "gi"), " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, NAME_MAX);
+}
+
 /** 5-char room code from an unambiguous alphabet. */
 export function makeRoomCode(): string {
   const alphabet = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";

@@ -23,8 +23,11 @@ import {
 } from "../src/mp/engine";
 import {
   DEFAULT_MP_CONFIG,
+  DEFAULT_NAME,
   MAX_SEATS,
   MIN_SEATS,
+  hasYouTag,
+  sanitizeName,
   type ClientMsg,
   type MpConfig,
   type Phase,
@@ -167,7 +170,7 @@ export class CoperoRoom extends Server<Env> {
   async onConnect(conn: Connection, ctx: ConnectionContext) {
     const url = new URL(ctx.request.url);
     const playerId = url.searchParams.get("playerId") ?? "";
-    const name = (url.searchParams.get("name") ?? "").trim().slice(0, 30) || "Sin Nombre";
+    const name = sanitizeName(url.searchParams.get("name") ?? "") || DEFAULT_NAME;
     const prefersSpectator = url.searchParams.get("spectator") === "1";
     if (!playerId) {
       this.sendError(conn, "no-player-id", "Missing playerId.");
@@ -295,7 +298,10 @@ export class CoperoRoom extends Server<Env> {
       case "rename": {
         if (this.room.phase !== "lobby")
           return this.sendError(conn, "bad-phase", "Names are locked after start.");
-        const name = (msg.name ?? "").trim().slice(0, 30);
+        const raw = msg.name ?? "";
+        if (hasYouTag(raw))
+          return this.sendError(conn, "bad-name", "Names can't contain “(you)”.");
+        const name = sanitizeName(raw);
         if (!name) return this.sendError(conn, "bad-name", "Name cannot be empty.");
         this.room.seats[seat].name = name;
         conn.setState({ ...connection, name });
