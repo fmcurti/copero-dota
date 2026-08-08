@@ -20,6 +20,7 @@ import {
   type RoomSnapshot,
   type Seat,
 } from "../../mp/protocol";
+import { WinPhrasesEditor } from "../../components/WinPhrases";
 import { DraftView } from "./DraftView";
 import { useRoom } from "./useRoom";
 
@@ -260,6 +261,12 @@ function LobbyView({
           </div>
         ))}
       </div>
+
+      {!isSpectator && (
+        <Section label="Win Phrases — optional">
+          <WinPhrasesEditor />
+        </Section>
+      )}
 
       <div className="flex justify-center">
         {isSpectator ? (
