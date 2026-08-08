@@ -6,6 +6,11 @@
   "name": "el-copero-del-dota",
   "main": "./worker/index.ts",
   "compatibility_date": "2026-08-01",
+  // Custom domain. Requires the fmcurti.com.ar zone to be active on this
+  // account first — wrangler then creates the DNS record and cert on deploy.
+  // workers_dev stays on so the old *.workers.dev link keeps working.
+  "workers_dev": true,
+  "routes": [{ "pattern": "dotero.fmcurti.com.ar", "custom_domain": true }],
   "assets": {
     "not_found_handling": "single-page-application",
     "binding": "ASSETS",
