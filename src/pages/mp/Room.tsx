@@ -42,6 +42,15 @@ export default function Room() {
     prevPhase.current = phase;
   }, [snapshot?.phase]);
 
+  // Sync my victory phrases to my seat (the server rejects them while unseated).
+  const winPhrases = useRunStore((s) => s.winPhrases);
+  const seated = snapshot?.seats.some((s) => s.playerId === playerId) ?? false;
+  const phrasesKey = winPhrases.join("\n");
+  useEffect(() => {
+    if (!seated) return;
+    send({ t: "phrases", phrases: phrasesKey ? phrasesKey.split("\n") : [] });
+  }, [seated, phrasesKey, send]);
+
   if (locked) {
     return (
       <div className="mx-auto max-w-md text-center">
@@ -595,6 +604,11 @@ function BroadcastView({
       result={result}
       teamName={myName}
       perspectiveOwnerId={playerId}
+      winPhrases={Object.fromEntries(
+        seats
+          .filter((s) => s.winPhrases?.length)
+          .map((s) => [s.playerId, s.winPhrases!]),
+      )}
       controlled={{ idx: beat.idx, playing: beat.playing }}
       onControl={isHost ? (action) => send({ t: "beat", action }) : undefined}
       footer={

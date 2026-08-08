@@ -28,6 +28,7 @@ import {
   MIN_SEATS,
   hasYouTag,
   sanitizeName,
+  sanitizeWinPhrases,
   type ClientMsg,
   type MpConfig,
   type Phase,
@@ -305,6 +306,11 @@ export class CoperoRoom extends Server<Env> {
         if (!name) return this.sendError(conn, "bad-name", "Name cannot be empty.");
         this.room.seats[seat].name = name;
         conn.setState({ ...connection, name });
+        break;
+      }
+      case "phrases": {
+        const phrases = sanitizeWinPhrases(msg.phrases);
+        this.room.seats[seat].winPhrases = phrases.length ? phrases : undefined;
         break;
       }
       case "start": {

@@ -464,11 +464,14 @@ function ClashStrip({
   m,
   roundName,
   shown,
+  taunt,
   hl,
 }: {
   m: BracketMatch;
   roundName: string;
   shown: number;
+  /** The winner's victory phrase, shown once the series is over. */
+  taunt: string | null;
   hl: (t: SimTeam) => Highlight;
 }) {
   const scoreA = m.games.slice(0, shown).filter((g) => g === "a").length;
@@ -535,6 +538,19 @@ function ClashStrip({
             <span className="anim-stamp plate inline-block rounded-sm border border-radiant-dim/70 bg-ink-950/90 px-3 py-0.5 text-xs tracking-widest text-radiant">
               {m.winner.name} se lleva la serie
             </span>
+          </div>
+        )}
+        {taunt && (
+          <div className="anim-taunt mt-2 text-center">
+            <div
+              className="plate-italic inline-block max-w-full truncate rounded-md border-2 border-dire bg-ink-950/95 px-6 py-2.5 text-xl text-bone sm:text-2xl"
+              style={{ boxShadow: "0 0 30px rgba(226, 87, 70, 0.4)" }}
+            >
+              “{taunt}”
+            </div>
+            <div className="mt-1.5 text-[10px] uppercase tracking-[0.35em] text-slate-mid">
+              — {m.winner.name}
+            </div>
           </div>
         )}
       </div>
@@ -632,6 +648,7 @@ export function Broadcast({
   controlled,
   onControl,
   perspectiveOwnerId,
+  winPhrases,
 }: {
   result: SimResult;
   teamName: string;
@@ -642,6 +659,8 @@ export function Broadcast({
   onControl?: (action: "pause" | "resume" | "skip") => void;
   /** Whose dots perspective and champion-plate line (defaults to the isUser team). */
   perspectiveOwnerId?: string;
+  /** Victory taunts by ownerId — one shows when that owner beats another human. */
+  winPhrases?: Record<string, string[]>;
 }) {
   const beats = useMemo(() => buildBeats(result), [result]);
   const [localIdx, setLocalIdx] = useState(0);
@@ -698,10 +717,21 @@ export function Broadcast({
     }
   }
   const clash =
-    !done && (cur.kind === "clash" || cur.kind === "game")
+    !done && (cur.kind === "clash" || cur.kind === "game" || cur.kind === "taunt")
       ? { roundIdx: cur.roundIdx, matchIdx: cur.matchIdx }
       : null;
   const clashMatch = clash ? result.rounds[clash.roundIdx]?.matches[clash.matchIdx] : null;
+
+  // Victory phrase: on the taunt beat, the winner picks one of their lines —
+  // seeded by match position so every client lands on the same phrase.
+  let taunt: string | null = null;
+  if (cur.kind === "taunt" && clashMatch && winPhrases) {
+    const phrases = clashMatch.winner.ownerId ? winPhrases[clashMatch.winner.ownerId] : undefined;
+    if (clashMatch.loser.ownerId != null && phrases?.length) {
+      const pick = ((result.seed >>> 0) + cur.roundIdx * 1009 + cur.matchIdx * 101) % phrases.length;
+      taunt = phrases[pick];
+    }
+  }
 
   const phaseLabel = done
     ? "Ceremonia"
@@ -857,7 +887,12 @@ export function Broadcast({
           key={`${clash.roundIdx}-${clash.matchIdx}`}
           m={clashMatch}
           roundName={result.rounds[clash.roundIdx].name}
-          shown={humanGames.get(`${clash.roundIdx}-${clash.matchIdx}`) ?? 0}
+          shown={
+            cur.kind === "taunt"
+              ? clashMatch.games.length
+              : (humanGames.get(`${clash.roundIdx}-${clash.matchIdx}`) ?? 0)
+          }
+          taunt={taunt}
           hl={hl}
         />
       )}
