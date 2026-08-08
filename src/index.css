@@ -428,68 +428,43 @@ body::before {
   animation: sweep 0.8s ease-out 0.15s both;
 }
 
-/* Victory taunt — a comic scream bubble bursting out of the winner. The
-   spiky outline is a clip-path star on the child; the red edge comes from
-   stacked drop-shadows on the parent (filters would be clipped otherwise). */
-.scream {
-  filter: drop-shadow(2px 0 0 var(--color-dire)) drop-shadow(-2px 0 0 var(--color-dire))
-    drop-shadow(0 2px 0 var(--color-dire)) drop-shadow(0 -2px 0 var(--color-dire))
-    drop-shadow(0 10px 18px rgba(0, 0, 0, 0.55));
-}
-.scream-shape {
+/* Victory taunt — "Tinta y oro": an ink scream bubble with an engraved gold
+   jagged edge, drawn at runtime as seeded SVG (Broadcast's ScreamBubble).
+   Pops in with overshoot, rage-shakes, settles at a tilt. */
+.grito {
   position: relative;
-  z-index: 10;
-  background: var(--color-bone);
-  color: var(--color-ink-950);
-  padding: 1.15em 2.9em;
-  clip-path: polygon(
-    100% 50%, 86.2% 55.3%, 98.2% 63.3%, 85.1% 65.9%, 92.7% 76%, 78.8% 76.2%,
-    82.9% 87.6%, 72% 83.3%, 70.3% 95.7%, 61.8% 86.6%, 57.9% 99.4%, 49.6% 86.8%,
-    42.7% 99.5%, 39.6% 85.4%, 30.5% 96%, 27% 83.8%, 18.1% 88.5%, 19.3% 76.8%,
-    8.4% 77.8%, 14.8% 66.3%, 1.9% 63.6%, 13.6% 55.7%, 0% 48.5%, 13.2% 44.8%,
-    2.1% 35.8%, 16.4% 35.1%, 8.4% 22.3%, 21.3% 25.5%, 16.3% 13.1%, 30.7% 18.2%,
-    30.3% 4.1%, 39.5% 14.3%, 43.2% 0.5%, 49.8% 10.2%, 57.6% 0.6%, 59.7% 14.2%,
-    70.6% 4.5%, 68.8% 19%, 82.5% 12%, 79.9% 24.6%, 92.8% 24.1%, 84.6% 33.8%,
-    98% 35.9%, 89.8% 44.1%
-  );
-}
-.scream-tail {
-  position: absolute;
-  top: -0.7rem;
-  z-index: 0;
-  width: 1.9rem;
-  height: 1.4rem;
-  background: var(--color-bone);
-  clip-path: polygon(12% 100%, 88% 78%, 34% 0%);
+  display: inline-block;
+  filter: drop-shadow(0 14px 22px rgba(0, 0, 0, 0.6));
 }
 @keyframes scream-in {
   0% {
     opacity: 0;
-    transform: scale(0.15) rotate(-16deg);
+    transform: scale(0.15) rotate(-14deg);
   }
   55% {
     opacity: 1;
-    transform: scale(1.16) rotate(3deg);
+    transform: scale(1.13) rotate(2.5deg);
   }
-  72% {
-    transform: scale(0.93) rotate(-2.5deg);
+  74% {
+    transform: scale(0.94) rotate(-2deg);
   }
   100% {
-    transform: scale(1) rotate(-1deg);
+    opacity: 1;
+    transform: scale(1) rotate(-1.2deg);
   }
 }
 @keyframes scream-shake {
   from {
-    transform: rotate(-1.6deg) translateX(-1px);
+    transform: rotate(-2deg) translateX(-1px);
   }
   to {
-    transform: rotate(0.8deg) translateX(1px);
+    transform: rotate(0.6deg) translateX(1px);
   }
 }
 .anim-scream {
   animation:
     scream-in 0.5s cubic-bezier(0.2, 1.3, 0.35, 1) 0.22s both,
-    scream-shake 0.14s ease-in-out 0.72s 6 alternate;
+    scream-shake 0.13s ease-in-out 0.7s 6 alternate;
 }
 
 /* Seal stamp — the 322-0 and qualification marks. */

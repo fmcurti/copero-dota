@@ -415,6 +415,91 @@ function BracketSection({
   );
 }
 
+// ---- victory scream ("Tinta y oro") ---------------------------------------
+
+function screamRng(seed: number): () => number {
+  let s = seed >>> 0 || 1;
+  return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296);
+}
+
+/** Irregular scream silhouette: jittered star points around an ellipse. */
+function screamPath(w: number, h: number, seed: number): string {
+  const rnd = screamRng(seed);
+  const spikes = 20;
+  const n = spikes * 2;
+  const cx = w / 2;
+  const cy = h / 2;
+  const rx = w / 2 - 10;
+  const ry = h / 2 - 10;
+  const pts: string[] = [];
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * 2 * Math.PI + (rnd() - 0.5) * ((2 * Math.PI) / n) * 0.55;
+    const er = (rx * ry) / Math.hypot(ry * Math.cos(a), rx * Math.sin(a));
+    const rad = i % 2 === 0 ? er * (0.84 + rnd() * 0.16) : er * (0.8 + rnd() * 0.09);
+    pts.push(`${(cx + rad * Math.cos(a)).toFixed(1)} ${(cy + rad * Math.sin(a)).toFixed(1)}`);
+  }
+  return `M${pts.join("L")}Z`;
+}
+
+/** Jagged tail dropping from the bubble's lower edge toward the winner. */
+function screamTail(w: number, h: number, fx: number): string {
+  const x = w * fx;
+  const y = h * 0.72;
+  const len = 46;
+  return `M${x - 20} ${y}L${x + 6} ${y + len * 0.62}L${x - 2} ${y + len * 0.58}L${x + 14} ${y + len}L${x + 26} ${y - 6}Z`;
+}
+
+function measureScream(phrase: string, fs: number): number {
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return phrase.length * fs * 0.5;
+  ctx.font = `italic 800 ${fs}px 'Barlow Condensed', 'Arial Narrow', sans-serif`;
+  return ctx.measureText(phrase).width;
+}
+
+function ScreamBubble({ phrase, seed, tailFx }: { phrase: string; seed: number; tailFx: number }) {
+  const { w, h, fs, d, tail } = useMemo(() => {
+    let fs = 30;
+    let w = Math.max(240, measureScream(phrase, fs) + fs * 6.2);
+    const maxW = typeof window !== "undefined" ? window.innerWidth * 0.92 : 680;
+    if (w > maxW) {
+      fs = Math.max(18, fs * (maxW / w));
+      w = maxW;
+    }
+    const h = Math.max(104, fs * 3.4);
+    return { w, h, fs, d: screamPath(w, h, seed), tail: screamTail(w, h, tailFx) };
+  }, [phrase, seed, tailFx]);
+  const uid = `g${seed % 99991}`;
+  return (
+    <div className="grito anim-scream" style={{ width: w, height: h }}>
+      <svg width={w} height={h + 52} viewBox={`0 0 ${w} ${h + 52}`} aria-hidden="true">
+        <defs>
+          <linearGradient id={uid} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor="#f5e6b0" />
+            <stop offset="0.5" stopColor="#d4af37" />
+            <stop offset="1" stopColor="#8a7326" />
+          </linearGradient>
+        </defs>
+        <path d={tail} fill="#101013" stroke={`url(#${uid})`} strokeWidth="2.5" />
+        <path
+          d={d}
+          fill="#101013"
+          stroke={`url(#${uid})`}
+          strokeWidth="3"
+          strokeLinejoin="miter"
+          strokeMiterlimit={14}
+        />
+      </svg>
+      <div
+        className="gold-text plate-italic absolute inset-x-0 top-0 flex items-center justify-center whitespace-nowrap text-center normal-case leading-none"
+        style={{ height: h, fontSize: fs, filter: "drop-shadow(0 0 14px rgba(212,175,55,0.35))" }}
+      >
+        {phrase}
+      </div>
+    </div>
+  );
+}
+
 // ---- clash strip (fixed lower third for human series) ---------------------
 
 function ClashPlate({
@@ -465,13 +550,16 @@ function ClashStrip({
   roundName,
   shown,
   taunt,
+  screamSeed,
   hl,
 }: {
   m: BracketMatch;
   roundName: string;
   shown: number;
-  /** The winner's victory phrase, shown once the series is over. */
+  /** The winner's victory phrase, screamed once the series is over. */
   taunt: string | null;
+  /** Seeds the bubble's jagged shape — same for every client, unique per series. */
+  screamSeed: number;
   hl: (t: SimTeam) => Highlight;
 }) {
   const scoreA = m.games.slice(0, shown).filter((g) => g === "a").length;
@@ -484,6 +572,12 @@ function ClashStrip({
   return (
     <div className="pointer-events-none fixed bottom-4 left-1/2 z-40 w-[min(880px,94vw)] -translate-x-1/2">
       <div className="relative">
+        {/* the winner screams OVER the teams, tail dropping toward their plate */}
+        {taunt && (
+          <div className="mb-2 flex justify-center">
+            <ScreamBubble phrase={taunt} seed={screamSeed} tailFx={aWon ? 0.3 : 0.7} />
+          </div>
+        )}
         <div className="mb-1 text-center">
           <span className="angled plate inline-block bg-ink-800/95 px-4 py-0.5 text-[10px] tracking-[0.3em] text-slate-mid shadow-lg">
             {roundName}
@@ -538,22 +632,6 @@ function ClashStrip({
             <span className="anim-stamp plate inline-block rounded-sm border border-radiant-dim/70 bg-ink-950/90 px-3 py-0.5 text-xs tracking-widest text-radiant">
               {m.winner.name} se lleva la serie
             </span>
-          </div>
-        )}
-        {taunt && (
-          <div className="anim-scream mt-3 flex flex-col items-center">
-            <div className="scream relative">
-              {/* tail bursts toward the winner's plate */}
-              <span
-                className={`scream-tail ${aWon ? "left-[14%]" : "right-[14%] -scale-x-100"}`}
-              />
-              <div className="scream-shape plate-italic max-w-[76vw] truncate text-xl normal-case sm:max-w-[560px] sm:text-2xl">
-                {taunt}
-              </div>
-            </div>
-            <div className="mt-2 text-[10px] uppercase tracking-[0.35em] text-slate-mid">
-              — {m.winner.name}
-            </div>
           </div>
         )}
       </div>
@@ -910,6 +988,7 @@ export function Broadcast({
               : (humanGames.get(`${clash.roundIdx}-${clash.matchIdx}`) ?? 0)
           }
           taunt={taunt}
+          screamSeed={(result.seed >>> 0) + clash.roundIdx * 1009 + clash.matchIdx * 101}
           hl={hl}
         />
       )}
