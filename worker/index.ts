@@ -31,6 +31,7 @@ import {
   type Seat,
   type ServerMsg,
 } from "../src/mp/protocol";
+import { seatPlayer, unseatPlayer } from "../src/mp/seating";
 
 interface Env {
   CoperoRoom: DurableObjectNamespace;
@@ -79,7 +80,7 @@ const freshRoom = (): RoomState => ({
 
 const CLEANUP_MS = 60 * 60 * 1000;
 
-type ConnState = { playerId: string } | null;
+type ConnState = { playerId: string; name: string; spectating: boolean } | null;
 
 export class CoperoRoom extends Server<Env> {
   static options = { hibernate: true };
@@ -166,32 +167,29 @@ export class CoperoRoom extends Server<Env> {
     const url = new URL(ctx.request.url);
     const playerId = url.searchParams.get("playerId") ?? "";
     const name = (url.searchParams.get("name") ?? "").trim().slice(0, 30) || "Sin Nombre";
+    const prefersSpectator = url.searchParams.get("spectator") === "1";
     if (!playerId) {
       this.sendError(conn, "no-player-id", "Missing playerId.");
       conn.close(4000, "no playerId");
       return;
     }
-    conn.setState({ playerId });
+    // Connections begin as viewers and are promoted only when they own/claim a seat.
+    conn.setState({ playerId, name, spectating: true });
     const seatIdx = this.room.seats.findIndex((s) => s.playerId === playerId);
-    if (seatIdx >= 0) {
+    if (seatIdx >= 0 && prefersSpectator && this.room.phase === "lobby") {
+      conn.setState({ playerId, name: this.room.seats[seatIdx].name, spectating: true });
+      this.room.seats = unseatPlayer(this.room.seats, playerId);
+    } else if (seatIdx >= 0) {
       // Reattach only — never clobber the seat name (it may have been renamed
       // in the lobby, and reconnects replay the stale query-string name).
-      this.room.seats[seatIdx].connected = true;
-    } else if (this.room.phase === "lobby" && this.room.seats.length < MAX_SEATS) {
-      this.room.seats.push({
-        playerId,
-        name,
-        connected: true,
-        isHost: this.room.seats.length === 0,
-      });
-    } else {
-      this.sendError(
-        conn,
-        "room-locked",
-        this.room.phase === "lobby" ? "Room is full." : "This game already started.",
-      );
-      conn.close(4001, "room locked");
-      return;
+      const savedName = this.room.seats[seatIdx].name;
+      this.room.seats = seatPlayer(this.room.seats, playerId, name);
+      conn.setState({ playerId, name: savedName, spectating: false });
+    } else if (!prefersSpectator && this.room.phase === "lobby") {
+      const nextSeats = seatPlayer(this.room.seats, playerId, name);
+      const seated = nextSeats.length > this.room.seats.length;
+      this.room.seats = nextSeats;
+      conn.setState({ playerId, name, spectating: !seated });
     }
     await this.save();
     this.broadcastSnapshot();
@@ -254,6 +252,33 @@ export class CoperoRoom extends Server<Env> {
       return this.sendError(conn, "bad-json", "Could not parse message.");
     }
     const playerId = (conn.state as ConnState)?.playerId;
+    const connection = conn.state as ConnState;
+    if (!playerId || !connection)
+      return this.sendError(conn, "no-player-id", "Missing playerId.");
+
+    if (msg.t === "spectate") {
+      if (this.room.phase !== "lobby")
+        return this.sendError(conn, "bad-phase", "Seats are locked after the draft starts.");
+      this.room.seats = unseatPlayer(this.room.seats, playerId);
+      conn.setState({ ...connection, spectating: true });
+      await this.save();
+      this.broadcastSnapshot();
+      return;
+    }
+
+    if (msg.t === "takeSeat") {
+      if (this.room.phase !== "lobby")
+        return this.sendError(conn, "bad-phase", "Seats are locked after the draft starts.");
+      const alreadySeated = this.room.seats.some((seat) => seat.playerId === playerId);
+      if (!alreadySeated && this.room.seats.length >= MAX_SEATS)
+        return this.sendError(conn, "room-full", "Room is full.");
+      this.room.seats = seatPlayer(this.room.seats, playerId, connection.name);
+      conn.setState({ ...connection, spectating: false });
+      await this.save();
+      this.broadcastSnapshot();
+      return;
+    }
+
     const seat = this.room.seats.findIndex((s) => s.playerId === playerId);
     if (seat < 0) return this.sendError(conn, "no-seat", "You are not seated in this room.");
     const isHost = this.room.seats[seat].isHost;
@@ -272,6 +297,7 @@ export class CoperoRoom extends Server<Env> {
         const name = (msg.name ?? "").trim().slice(0, 30);
         if (!name) return this.sendError(conn, "bad-name", "Name cannot be empty.");
         this.room.seats[seat].name = name;
+        conn.setState({ ...connection, name });
         break;
       }
       case "start": {

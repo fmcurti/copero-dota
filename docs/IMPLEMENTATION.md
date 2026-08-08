@@ -151,9 +151,12 @@ Never denies, never mulligans.
 - Room id = URL code (5 chars, alphabet `23456789ABCDEFGHJKMNPQRSTUVWXYZ`, client-generated).
 - `static options = { hibernate: true }` — hibernation wipes memory, so **rehydrate
   from `ctx.storage` in `onStart()`** and persist after every accepted action.
-  Socket→seat via `connection.setState({playerId})` (survives hibernation).
-- `hello`: known playerId → reattach (`connected = true`); new + lobby + <4 seats →
-  new seat; new mid-game → reject (spectators are later polish). Close → `connected = false`.
+  Socket identity/role via `connection.setState({playerId, name, spectating})`
+  (survives hibernation).
+- Connect: known playerId → reattach (`connected = true`); new + lobby + an open
+  seat → auto-seat; otherwise → read-only spectator with the full current snapshot.
+  A lobby drafter can `spectate` to vacate their seat, and a spectator can `takeSeat`
+  while one is open. Close → seated drafter `connected = false`.
 - `start` (host, ≥2 seats): load bundle via ASSETS, build card pool once,
   `createDraft` + `openPack`, set turn alarm, → `drafting`.
 - Draft actions: validate `turnSeat`, run `applyAction`, advance/open next pack,
@@ -254,4 +257,7 @@ locally (deterministic) and render `Broadcast controlled={beat}`.
 - No-legal-pick seats get the turn only if they can still Deny; else auto-passed.
 - Denied player = globally destroyed; denied hero = removed from that pack only.
 - Room codes: 5-char unambiguous alphabet, client-generated.
-- Host fixed at seat 0; host migration, spectators, sounds, ladder → post-v1.
+- Vacating the host seat transfers hosting to the first remaining drafter.
+- Spectators can join full, drafting, assembled, broadcasting, and finished rooms;
+  finished-room retention is unchanged (cleanup one hour after everyone disconnects).
+- Sounds and a persistent ladder → post-v1.

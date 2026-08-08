@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ClientMsg, RoomSnapshot, ServerMsg } from "../../mp/protocol";
 
 const PLAYER_ID_KEY = "copero-player-id";
+const spectatorKey = (code: string) => `copero-mp-spectator:${code}`;
 
 /** Stable per-browser identity — survives reloads, powers reconnects. */
 export function getPlayerId(): string {
@@ -22,8 +23,12 @@ export function useRoom(code: string, name: string) {
   // Freeze the name at mount so typing elsewhere never churns the socket.
   const nameRef = useRef(name);
   const query = useMemo(
-    () => ({ playerId, name: nameRef.current }),
-    [playerId],
+    () => () => ({
+      playerId,
+      name: nameRef.current,
+      spectator: localStorage.getItem(spectatorKey(code)) === "1" ? "1" : null,
+    }),
+    [code, playerId],
   );
 
   const socket = usePartySocket({
@@ -45,7 +50,15 @@ export function useRoom(code: string, name: string) {
   }, [lastError]);
 
   const send = useCallback((m: ClientMsg) => socket.send(JSON.stringify(m)), [socket]);
-  return { playerId, snapshot, send, lastError, locked };
+  const spectate = useCallback(() => {
+    localStorage.setItem(spectatorKey(code), "1");
+    socket.send(JSON.stringify({ t: "spectate" } satisfies ClientMsg));
+  }, [code, socket]);
+  const takeSeat = useCallback(() => {
+    localStorage.removeItem(spectatorKey(code));
+    socket.send(JSON.stringify({ t: "takeSeat" } satisfies ClientMsg));
+  }, [code, socket]);
+  return { playerId, snapshot, send, spectate, takeSeat, lastError, locked };
 }
 
 /** Re-renders on an interval — for countdowns. */

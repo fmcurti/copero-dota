@@ -23,7 +23,10 @@ import { useRoom } from "./useRoom";
 export default function Room() {
   const { code = "" } = useParams();
   const teamName = useRunStore((s) => s.teamName);
-  const { playerId, snapshot, send, lastError, locked } = useRoom(code, teamName || "Your Team");
+  const { playerId, snapshot, send, spectate, takeSeat, lastError, locked } = useRoom(
+    code,
+    teamName || "Your Team",
+  );
   const { bundle, error } = useBundle();
   const heroById = useHeroById(bundle);
 
@@ -50,6 +53,7 @@ export default function Room() {
 
   const mySeat = snapshot.seats.findIndex((s) => s.playerId === playerId);
   const isHost = mySeat >= 0 && snapshot.seats[mySeat].isHost;
+  const isSpectator = mySeat < 0;
 
   return (
     <div>
@@ -58,8 +62,21 @@ export default function Room() {
           {lastError}
         </div>
       )}
+      {isSpectator && snapshot.phase !== "lobby" && (
+        <div className="plate mb-4 rounded-lg border border-ink-700 bg-ink-900/50 px-4 py-2 text-center text-xs tracking-widest text-slate-mid">
+          Spectating · room {code}
+        </div>
+      )}
       {snapshot.phase === "lobby" && (
-        <LobbyView code={code} snapshot={snapshot} isHost={isHost} myId={playerId} send={send} />
+        <LobbyView
+          code={code}
+          snapshot={snapshot}
+          isHost={isHost}
+          myId={playerId}
+          send={send}
+          onSpectate={spectate}
+          onTakeSeat={takeSeat}
+        />
       )}
       {snapshot.phase === "drafting" && snapshot.draft && (
         <DraftView
@@ -160,6 +177,8 @@ function LobbyView({
   isHost,
   myId,
   send,
+  onSpectate,
+  onTakeSeat,
 }: {
   code: string;
   snapshot: RoomSnapshot;
@@ -168,10 +187,14 @@ function LobbyView({
   send: (
     m: { t: "configure"; config: Partial<MpConfig> } | { t: "rename"; name: string } | { t: "start" },
   ) => void;
+  onSpectate: () => void;
+  onTakeSeat: () => void;
 }) {
   const setTeamName = useRunStore((s) => s.setTeamName);
   const c = snapshot.config;
   const canStart = snapshot.seats.length >= MIN_SEATS;
+  const isSpectator = !snapshot.seats.some((seat) => seat.playerId === myId);
+  const canTakeSeat = snapshot.seats.length < MAX_SEATS;
   const set = (config: Partial<MpConfig>) => send({ t: "configure", config });
   const rename = (name: string) => {
     send({ t: "rename", name });
@@ -203,6 +226,25 @@ function LobbyView({
             esperando drafter…
           </div>
         ))}
+      </div>
+
+      <div className="flex justify-center">
+        {isSpectator ? (
+          <button
+            onClick={onTakeSeat}
+            disabled={!canTakeSeat}
+            className="rounded-lg border border-ink-600 px-5 py-2 text-sm font-semibold text-slate-strong hover:border-slate-mid hover:text-bone disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {canTakeSeat ? "Take an open seat" : "Spectating · room is full"}
+          </button>
+        ) : (
+          <button
+            onClick={onSpectate}
+            className="rounded-lg border border-ink-600 px-5 py-2 text-sm font-semibold text-slate-strong hover:border-slate-mid hover:text-bone"
+          >
+            Sit this one out · spectate
+          </button>
+        )}
       </div>
 
       <div className="space-y-5">
@@ -295,6 +337,10 @@ function LobbyView({
         >
           {canStart ? "Start Draft" : `Need ${MIN_SEATS}+ drafters`}
         </button>
+      ) : isSpectator ? (
+        <div className="text-center text-sm text-slate-dim">
+          You’re spectating this lobby.
+        </div>
       ) : (
         <div className="text-center text-sm text-slate-dim">
           esperando a que el host arranque el draft…
@@ -462,7 +508,7 @@ function BroadcastView({
     [field, simSeed],
   );
   const done = snapshot.phase === "done";
-  const myName = mySeat >= 0 ? seats[mySeat].name : "—";
+  const myName = mySeat >= 0 ? seats[mySeat].name : "Spectator";
 
   // Record my own result locally, once per (room, sim).
   useEffect(() => {

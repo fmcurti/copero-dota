@@ -94,6 +94,8 @@ export interface RoomSnapshot {
 export type ClientMsg =
   | { t: "configure"; config: Partial<MpConfig> } // host, lobby only
   | { t: "rename"; name: string } // own seat, lobby only
+  | { t: "spectate" } // vacate own seat, lobby only
+  | { t: "takeSeat" } // claim an open seat, lobby only
   | { t: "start" } // host, needs MIN_SEATS+
   | { t: "pick"; card: CardRef }
   | { t: "deny"; card: CardRef }

@@ -26,6 +26,10 @@ dramatic sim decides the Copero.
   playtesting: drafts dragged), mulligans per drafter (default 1, range 0–2
   as the difficulty knob).
 - Join by room code. Reconnect = replay current snapshot from the DO.
+- Visitors are auto-seated while the lobby has room. A seated drafter can sit
+  out before the draft starts (and reclaim an open seat); visitors to a full,
+  in-progress, or finished room join as read-only spectators. Spectators see
+  the same live draft, broadcast, and final results snapshot as the drafters.
 
 ### Draft — booster pass-around with team packs
 - Packs are the original kind: **a real team at an event** — 5 players + 5
@@ -83,6 +87,9 @@ dramatic sim decides the Copero.
 ### After
 - **Sessions are standalone** — no persistent ladder for v1 (revisit later;
   DO storage makes an all-time tally cheap if we want it).
+- Finished rooms keep their existing lifecycle: the Durable Object is deleted
+  one hour after the room becomes empty. Spectating does not extend storage or
+  add a results database; it only exposes the state while the room still lives.
 - Rematch = host starts a fresh lobby (room codes are cheap).
 
 ## Why the current clone is ready for this
@@ -100,9 +107,9 @@ so results screens can highlight every human team.
 lobby → drafting → assembled → broadcasting → done
 ```
 
-Server-authoritative. Client→server: `join`, `configure` (host), `start`
-(host), `pick {cardId}`, `deny {cardId}`, `mulligan`, `assignHero`, `play`
-(host), `leave`.
+Server-authoritative. Client→server: `configure` (host), `spectate`, `takeSeat`,
+`start` (host), `pick {cardId}`, `deny {cardId}`, `mulligan`, `assignHero`,
+`play` (host), `beat` (host).
 Server→clients: full room snapshot on every change (state is tiny) —
 `{phase, config, seats[], openerIndex, currentPack, turnSeat, boards[],
 takenSteamIds, deniedShelf[], mulligansLeft[], deniesLeft[], field?, simSeed?,
@@ -119,7 +126,7 @@ revealStage?}`. Timer runs server-side (DO alarm) → autopick on expiry.
    intel + denied shelf), reusing existing card components.
 5. Assembly + broadcast reveal (staged rendering of the existing Results
    component).
-6. Polish: reconnect, spectators after board completion, sounds/taunts.
+6. Polish: reconnect, spectators, sounds/taunts.
 
 ## Open questions (minor, decide during build)
 
