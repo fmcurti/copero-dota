@@ -53,12 +53,16 @@ export interface EngineState {
   done: boolean;
 }
 
-export function createDraft(numSeats: number, config: { mulligans: number }): EngineState {
+export function createDraft(
+  numSeats: number,
+  config: { mulligans: number; openerSeat?: number },
+): EngineState {
   return {
     numSeats,
     packSeq: 0,
     roundSeq: 0,
-    openerSeat: 0,
+    // Who opens the first spread is the caller's roll; rotation runs from there.
+    openerSeat: (((config.openerSeat ?? 0) % numSeats) + numSeats) % numSeats,
     turnSeat: null,
     currentPacks: [],
     actedSeats: [],
