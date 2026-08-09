@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CardButton, HeroCardContent, PlayerCardContent, ROLE_BAR, ovrColor } from "../../components/cards";
 import { SLOT_IDS, type Slots } from "../../game/draft";
 import { eventShortName, heroImage } from "../../game/data";
@@ -7,6 +7,9 @@ import type { DataBundle, Hero, RosterPlayer, TeamStrength } from "../../game/ty
 import { legalActions, type EngineState } from "../../mp/engine";
 import { synergyHints } from "../../mp/synergy";
 import type { Board, CardRef, ClientMsg, DraftPublic, RoomSnapshot } from "../../mp/protocol";
+import { announce, preloadAnnouncer } from "./announcer";
+import { SoundControl } from "./SoundControl";
+import { TurnTimer } from "./TurnTimer";
 import { useNow } from "./useRoom";
 
 function ordinal(n: number): string {
@@ -264,6 +267,25 @@ export function DraftView({
   const secsLeft =
     d.turnDeadline != null ? Math.max(0, Math.ceil((d.turnDeadline - now) / 1000)) : null;
 
+  // Dota announcer: "Your turn to pick" once per turn, "Five seconds remaining"
+  // once per turn when the clock runs low. Keyed by round+seat so back-to-back
+  // turns across rounds re-announce but mulligan replacements don't.
+  useEffect(preloadAnnouncer, []);
+  const announcedTurn = useRef<string | null>(null);
+  const warnedTurn = useRef<string | null>(null);
+  useEffect(() => {
+    if (!myTurn) return;
+    const key = `${d.roundSeq}:${d.turnSeat}`;
+    if (announcedTurn.current !== key) {
+      announcedTurn.current = key;
+      announce("yourTurn");
+    }
+    if (secsLeft != null && secsLeft > 0 && secsLeft <= 5 && warnedTurn.current !== key) {
+      warnedTurn.current = key;
+      announce("fiveSeconds");
+    }
+  });
+
   const nickById = useMemo(() => {
     const m = new Map<number, string>();
     for (const pack of bundle.packs) for (const p of pack.players) m.set(p.steamId, p.nickname);
@@ -295,6 +317,9 @@ export function DraftView({
 
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_300px]">
+      {myTurn && d.turnDeadline != null && snapshot.config.timerSecs != null && (
+        <TurnTimer deadline={d.turnDeadline} totalSecs={snapshot.config.timerSecs} />
+      )}
       <section>
         <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
           <div>
@@ -443,7 +468,10 @@ export function DraftView({
       </section>
 
       <aside className="space-y-2">
-        <div className="plate text-sm tracking-widest text-slate-dim">Boards</div>
+        <div className="flex items-center justify-between">
+          <div className="plate text-sm tracking-widest text-slate-dim">Boards</div>
+          <SoundControl />
+        </div>
         {seats.map((s, i) => (
           <MiniBoard
             key={s.playerId}
