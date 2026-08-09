@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Broadcast } from "../components/Broadcast";
 import { DEV_TAUNT_ALL } from "../game/beats";
 import { CardButton, HeroCardContent, PlayerCardContent } from "../components/cards";
+import { DraftRecap } from "../components/DraftRecap";
 import { RosterBoard } from "../components/RosterBoard";
 import { Stinger } from "../components/Stinger";
 import { buildCardPool } from "../game/cards";
@@ -209,19 +210,32 @@ export default function Draft() {
         teamName={teamName || "Your Team"}
         localTauntPhrases={devPhrases}
         footer={
-          <div className="flex gap-3">
-            <button
-              onClick={simulate}
-              className="flex-1 rounded-lg border border-ink-600 py-3 text-sm font-semibold text-slate-strong hover:border-slate-mid hover:text-bone"
-            >
-              Run it back (new bracket)
-            </button>
-            <button
-              onClick={newRun}
-              className="cta-dota plate flex-1 rounded-lg py-3 text-base font-bold tracking-widest"
-            >
-              New draft
-            </button>
+          <div className="space-y-4">
+            <div className="panel rounded-xl p-4">
+              <div className="plate mb-2 text-sm tracking-widest text-slate-dim">
+                Your Draft
+              </div>
+              <DraftRecap
+                slots={slots}
+                heroes={heroes}
+                strength={strength}
+                heroById={heroById}
+              />
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={simulate}
+                className="flex-1 rounded-lg border border-ink-600 py-3 text-sm font-semibold text-slate-strong hover:border-slate-mid hover:text-bone"
+              >
+                Run it back (new bracket)
+              </button>
+              <button
+                onClick={newRun}
+                className="cta-dota plate flex-1 rounded-lg py-3 text-base font-bold tracking-widest"
+              >
+                New draft
+              </button>
+            </div>
           </div>
         }
       />

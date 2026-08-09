@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Broadcast } from "../../components/Broadcast";
+import { DraftRecap } from "../../components/DraftRecap";
 import { OptionCard, Section } from "../../components/options";
 import { ovrColor } from "../../components/cards";
 import { Stinger } from "../../components/Stinger";
@@ -145,6 +146,7 @@ export default function Room() {
           isHost={isHost}
           playerId={playerId}
           send={send}
+          heroById={heroById}
         />
       )}
     </div>
@@ -633,6 +635,7 @@ function BroadcastView({
   isHost,
   playerId,
   send,
+  heroById,
 }: {
   code: string;
   snapshot: RoomSnapshot;
@@ -640,9 +643,13 @@ function BroadcastView({
   isHost: boolean;
   playerId: string;
   send: (m: { t: "beat"; action: "pause" | "resume" | "skip" }) => void;
+  heroById: Map<number, Hero>;
 }) {
   const navigate = useNavigate();
   const recordRun = useRunStore((s) => s.recordRun);
+  // Which drafts are open on the result panel. The winner starts expanded;
+  // an entry here is an explicit toggle that overrides that default.
+  const [openDrafts, setOpenDrafts] = useState<Record<string, boolean>>({});
   const { field, simSeed, beat, seats, config } = snapshot;
   const result: SimResult | null = useMemo(
     () => (field && simSeed != null ? simulateTournament(field, simSeed) : null),
@@ -698,9 +705,11 @@ function BroadcastView({
   if (!result || !beat) return <div className="text-slate-dim">Preparing broadcast…</div>;
 
   const humanStandings = seats
-    .map((s) => ({ seat: s, stats: result.ownerStats[s.playerId] }))
+    .map((s, seatIdx) => ({ seat: s, seatIdx, stats: result.ownerStats[s.playerId] }))
     .filter((x) => x.stats)
-    .sort((a, b) => a.stats.place - b.stats.place);
+    // Same placement (a shared 9–12th) is broken by games won, so the row at
+    // the top is always the one with the best tournament behind it.
+    .sort((a, b) => a.stats.place - b.stats.place || b.stats.gamesWon - a.stats.gamesWon);
 
   return (
     <Broadcast
@@ -714,27 +723,56 @@ function BroadcastView({
       footer={
         <div className="space-y-4">
           <div className="rounded-xl border border-ink-700 bg-ink-900/40 p-4">
-            <div className="plate mb-2 text-sm tracking-widest text-slate-dim">
+            <div className="plate text-sm tracking-widest text-slate-dim">
               El Copero — resultado entre amigos
             </div>
+            <p className="mb-2 text-xs text-slate-dim">
+              Pick a team to see the draft behind the result.
+            </p>
             <div className="space-y-1">
-              {humanStandings.map(({ seat, stats }, i) => (
-                <div
-                  key={seat.playerId}
-                  className={`flex items-baseline justify-between rounded px-2 py-1 text-sm ${
-                    i === 0 ? "bg-ink-800/70 font-bold text-trophy" : "text-slate-strong"
-                  }`}
-                >
-                  <span>
-                    {i === 0 ? "🏆 " : ""}
-                    {seat.name}
-                    {seat.playerId === playerId ? " (you)" : ""}
-                  </span>
-                  <span className="font-mono text-xs">
-                    {stats.label} · {stats.gamesWon}–{stats.gamesLost}
-                  </span>
-                </div>
-              ))}
+              {humanStandings.map(({ seat, seatIdx, stats }, i) => {
+                const board = snapshot.draft?.boards[seatIdx];
+                const strength = snapshot.strengths?.[seatIdx];
+                const expanded = openDrafts[seat.playerId] ?? i === 0;
+                return (
+                  <div key={seat.playerId}>
+                    <button
+                      onClick={() =>
+                        setOpenDrafts((o) => ({ ...o, [seat.playerId]: !expanded }))
+                      }
+                      aria-expanded={expanded}
+                      disabled={!board || !strength}
+                      className={`flex w-full items-baseline gap-2 rounded px-2 py-1 text-left text-sm ${
+                        i === 0 ? "bg-ink-800/70 font-bold text-trophy" : "text-slate-strong"
+                      } ${board && strength ? "hover:bg-ink-800/70" : ""}`}
+                    >
+                      <span
+                        className={`shrink-0 font-mono text-xs ${board && strength ? "text-slate-mid" : "text-transparent"}`}
+                      >
+                        {expanded ? "▾" : "▸"}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate">
+                        {i === 0 ? "🏆 " : ""}
+                        {seat.name}
+                        {seat.playerId === playerId ? " (you)" : ""}
+                      </span>
+                      <span className="shrink-0 font-mono text-xs">
+                        {stats.label} · {stats.gamesWon}–{stats.gamesLost}
+                      </span>
+                    </button>
+                    {expanded && board && strength && (
+                      <div className="beat-in mt-1.5 px-2 pb-2">
+                        <DraftRecap
+                          slots={board.slots}
+                          heroes={board.heroes}
+                          strength={strength}
+                          heroById={heroById}
+                        />
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
           <div className="flex gap-3">
