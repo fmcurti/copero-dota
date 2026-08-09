@@ -14,10 +14,19 @@
   "assets": {
     "not_found_handling": "single-page-application",
     "binding": "ASSETS",
-    "run_worker_first": ["/parties/*"]
+    // Both prefixes MUST be here. Anything else is answered by the asset
+    // router first, and single-page-application turns an unknown path into
+    // index.html with a 200 — so /api/rooms would silently return HTML.
+    "run_worker_first": ["/parties/*", "/api/*"]
   },
   "durable_objects": {
-    "bindings": [{ "name": "CoperoRoom", "class_name": "CoperoRoom" }]
+    "bindings": [
+      { "name": "CoperoRoom", "class_name": "CoperoRoom" },
+      { "name": "CoperoDirectory", "class_name": "CoperoDirectory" }
+    ]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["CoperoRoom"] }]
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["CoperoRoom"] },
+    { "tag": "v2", "new_sqlite_classes": ["CoperoDirectory"] }
+  ]
 }

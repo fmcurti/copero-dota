@@ -7,6 +7,7 @@ import Draft from "./pages/Draft";
 import History from "./pages/History";
 import Versus from "./pages/mp/Versus";
 import Room from "./pages/mp/Room";
+import Watch from "./pages/mp/Watch";
 import "./index.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
@@ -16,6 +17,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
         <Route element={<App />}>
           {/* Versus is the front door; solo lives at /solo. */}
           <Route path="/" element={<Versus />} />
+          <Route path="/watch" element={<Watch />} />
           <Route path="/solo" element={<Home />} />
           <Route path="/draft" element={<Draft />} />
           <Route path="/history" element={<History />} />

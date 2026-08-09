@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Broadcast } from "../../components/Broadcast";
 import { OptionCard, Section } from "../../components/options";
 import { ovrColor } from "../../components/cards";
@@ -18,14 +18,20 @@ import {
   type ClientMsg,
   type MpConfig,
   type RoomSnapshot,
+  type RoomVisibility,
   type Seat,
 } from "../../mp/protocol";
+import { nameTaken } from "../../mp/seating";
 import { WinPhrasesEditor } from "../../components/WinPhrases";
 import { DraftView } from "./DraftView";
-import { useRoom } from "./useRoom";
+import { useRoom, watchOnly } from "./useRoom";
 
 export default function Room() {
   const { code = "" } = useParams();
+  const [searchParams] = useSearchParams();
+  // Shared watch links (/mp/CODE?spectator=1) must not take a seat. This has
+  // to run before useRoom opens the socket — that is when the flag is read.
+  if (searchParams.get("spectator") === "1") watchOnly(code);
   const teamName = useRunStore((s) => s.teamName);
   const { playerId, snapshot, send, spectate, takeSeat, lastError, locked, opens } = useRoom(
     code,
@@ -147,7 +153,7 @@ export default function Room() {
 
 // ---------------------------------------------------------------------------
 
-function SeatPlate({ seat }: { seat: Seat }) {
+function SeatPlate({ seat, onKick }: { seat: Seat; onKick?: () => void }) {
   return (
     <div className="flex items-center gap-3 rounded-lg border border-ink-700 bg-ink-900/40 px-4 py-3">
       <span
@@ -160,13 +166,31 @@ function SeatPlate({ seat }: { seat: Seat }) {
           Host
         </span>
       )}
+      {onKick && (
+        <button
+          onClick={onKick}
+          title={`Remove ${seat.name} from the lobby`}
+          className="plate shrink-0 rounded-sm border border-ink-700 px-1.5 py-0.5 text-[10px] tracking-widest text-slate-dim transition hover:border-dire/60 hover:text-dire"
+        >
+          Remove
+        </button>
+      )}
     </div>
   );
 }
 
 /** Your own seat in the lobby: the name is editable in place. */
-function MySeatPlate({ seat, onRename }: { seat: Seat; onRename: (name: string) => void }) {
+function MySeatPlate({
+  seat,
+  isTaken,
+  onRename,
+}: {
+  seat: Seat;
+  isTaken: (name: string) => boolean;
+  onRename: (name: string) => void;
+}) {
   const [value, setValue] = useState(seat.name);
+  const [taken, setTaken] = useState(false);
   const commit = () => {
     const name = sanitizeName(value);
     if (!name) {
@@ -175,22 +199,35 @@ function MySeatPlate({ seat, onRename }: { seat: Seat; onRename: (name: string) 
     }
     // Show what the server will actually store, so a stripped "(you)" is visible.
     setValue(name);
-    if (name !== seat.name) onRename(name);
+    // The server rejects duplicates too; checking here just saves the round
+    // trip and puts the complaint next to the field it is about.
+    setTaken(isTaken(name));
+    if (!isTaken(name) && name !== seat.name) onRename(name);
   };
   return (
-    <div className="flex items-center gap-3 rounded-lg border border-bone/50 bg-ink-800 px-4 py-3">
+    <div
+      className={`flex items-center gap-3 rounded-lg border bg-ink-800 px-4 py-3 ${
+        taken ? "border-dire/60" : "border-bone/50"
+      }`}
+    >
       <span
         className={`h-2 w-2 shrink-0 rounded-full ${seat.connected ? "bg-bone" : "bg-ink-600"}`}
       />
       <input
         value={value}
-        onChange={(e) => setValue(e.target.value)}
+        onChange={(e) => {
+          setValue(e.target.value);
+          setTaken(false);
+        }}
         onBlur={commit}
         onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
         maxLength={NAME_MAX}
         title="Edit your team name"
         className="min-w-0 flex-1 rounded-sm bg-transparent text-sm font-bold text-bone outline-none placeholder:text-slate-dim focus:bg-ink-900/60"
       />
+      {taken && (
+        <span className="plate shrink-0 text-[10px] tracking-widest text-dire">Name taken</span>
+      )}
       {seat.isHost && (
         <span className="plate rounded-sm border border-ink-600 px-1.5 py-0.5 text-[10px] tracking-widest text-slate-dim">
           Host
@@ -200,6 +237,27 @@ function MySeatPlate({ seat, onRename }: { seat: Seat; onRename: (name: string) 
     </div>
   );
 }
+
+const VISIBILITIES: { v: RoomVisibility; name: string; desc: string; badge: string }[] = [
+  {
+    v: "private",
+    name: "Private",
+    desc: "Listed nowhere. Only the code gets you in.",
+    badge: "",
+  },
+  {
+    v: "spectatable",
+    name: "Spectatable",
+    desc: "Hidden until it starts, then anyone can watch.",
+    badge: "Watchable once it starts",
+  },
+  {
+    v: "public",
+    name: "Public",
+    desc: "Listed on the home page. Anyone can sit down.",
+    badge: "Listed on the home page",
+  },
+];
 
 const TIMERS: { v: MpConfig["timerSecs"]; name: string; desc: string }[] = [
   { v: 7, name: "7s", desc: "Blitz — trust your gut." },
@@ -222,13 +280,19 @@ function LobbyView({
   isHost: boolean;
   myId: string;
   send: (
-    m: { t: "configure"; config: Partial<MpConfig> } | { t: "rename"; name: string } | { t: "start" },
+    m:
+      | { t: "configure"; config: Partial<MpConfig> }
+      | { t: "rename"; name: string }
+      | { t: "kick"; playerId: string }
+      | { t: "start" },
   ) => void;
   onSpectate: () => void;
   onTakeSeat: () => void;
 }) {
   const setTeamName = useRunStore((s) => s.setTeamName);
   const c = snapshot.config;
+  // Older servers (and older snapshots) have no visibility at all.
+  const visibility = c.visibility ?? "private";
   const canStart = snapshot.seats.length >= MIN_SEATS;
   const isSpectator = !snapshot.seats.some((seat) => seat.playerId === myId);
   const canTakeSeat = snapshot.seats.length < MAX_SEATS;
@@ -247,14 +311,30 @@ function LobbyView({
         <p className="mt-2 text-xs text-slate-mid">
           pasale el código (o el link) a tus amigos — 2 a 8 drafters
         </p>
+        {/* Everyone sees this, not just the host: if the room is on a public
+            list, the people in it should know. */}
+        {visibility !== "private" && (
+          <div className="plate mt-3 inline-block rounded-sm border border-ink-600 px-1.5 py-0.5 text-[10px] tracking-widest text-slate-dim">
+            {VISIBILITIES.find((v) => v.v === visibility)?.badge}
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         {snapshot.seats.map((s) =>
           s.playerId === myId ? (
-            <MySeatPlate key={s.playerId} seat={s} onRename={rename} />
+            <MySeatPlate
+              key={s.playerId}
+              seat={s}
+              isTaken={(name) => nameTaken(snapshot.seats, name, myId)}
+              onRename={rename}
+            />
           ) : (
-            <SeatPlate key={s.playerId} seat={s} />
+            <SeatPlate
+              key={s.playerId}
+              seat={s}
+              onKick={isHost ? () => send({ t: "kick", playerId: s.playerId }) : undefined}
+            />
           ),
         )}
         {Array.from({ length: MAX_SEATS - snapshot.seats.length }, (_, i) => (
@@ -293,6 +373,18 @@ function LobbyView({
       </div>
 
       <div className="space-y-5">
+        <Section label="Who can find this room">
+          {VISIBILITIES.map((v) => (
+            <OptionCard
+              key={v.v}
+              title={v.name}
+              desc={v.desc}
+              selected={visibility === v.v}
+              onClick={() => set({ visibility: v.v })}
+              disabled={!isHost}
+            />
+          ))}
+        </Section>
         <Section label="Format">
           <OptionCard
             title="Valve Legacy"

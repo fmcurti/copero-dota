@@ -15,12 +15,21 @@ import type {
 
 export type Phase = "lobby" | "drafting" | "assembled" | "broadcasting" | "done";
 
+/**
+ * Who can find a room without being handed its code:
+ *  - private     — nobody; the code is the only way in (the default).
+ *  - spectatable — hidden while it fills up, listed to watch once it starts.
+ *  - public      — listed as an open lobby, and watchable once it starts.
+ */
+export type RoomVisibility = "private" | "spectatable" | "public";
+
 export interface MpConfig {
   format: GameFormat;
   cardMode: CardMode;
   heroAlloc: HeroAlloc;
   timerSecs: 7 | 15 | 25 | null;
   mulligans: 0 | 1 | 2;
+  visibility: RoomVisibility;
 }
 
 export const DEFAULT_MP_CONFIG: MpConfig = {
@@ -29,6 +38,7 @@ export const DEFAULT_MP_CONFIG: MpConfig = {
   heroAlloc: "auto",
   timerSecs: 15,
   mulligans: 1,
+  visibility: "private",
 };
 
 export const MIN_SEATS = 2;
@@ -116,6 +126,7 @@ export type ClientMsg =
 
   | { t: "spectate" } // vacate own seat, lobby only
   | { t: "takeSeat" } // claim an open seat, lobby only
+  | { t: "kick"; playerId: string } // host, lobby only — unseats, no ban
   | { t: "start" } // host, needs MIN_SEATS+
   | { t: "pick"; card: CardRef }
   | { t: "deny"; card: CardRef }

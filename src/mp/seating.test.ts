@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Seat } from "./protocol";
-import { seatPlayer, unseatPlayer } from "./seating";
+import { NAME_MAX } from "./protocol";
+import { nameTaken, seatPlayer, uniqueName, unseatPlayer } from "./seating";
 
 const seat = (playerId: string, isHost = false, connected = true): Seat => ({
   playerId,
@@ -38,5 +39,43 @@ describe("multiplayer seating", () => {
       seat("b", true),
       seat("c"),
     ]);
+  });
+});
+
+describe("unique team names", () => {
+  const taken = [
+    { playerId: "a", name: "Alianza", connected: true, isHost: true },
+    { playerId: "b", name: "Los Fumadores", connected: true, isHost: false },
+  ];
+
+  it("ignores case and padding when comparing", () => {
+    expect(nameTaken(taken, "alianza")).toBe(true);
+    expect(nameTaken(taken, "  ALIANZA  ")).toBe(true);
+    expect(nameTaken(taken, "Alianza FC")).toBe(false);
+  });
+
+  it("lets a drafter keep their own name", () => {
+    expect(nameTaken(taken, "Alianza", "a")).toBe(false);
+    expect(nameTaken(taken, "Alianza", "b")).toBe(true);
+  });
+
+  it("leaves a free name alone and numbers a colliding one", () => {
+    expect(uniqueName(taken, "OG")).toBe("OG");
+    expect(uniqueName(taken, "Alianza")).toBe("Alianza 2");
+    expect(uniqueName([...taken, { ...taken[0], playerId: "c", name: "Alianza 2" }], "Alianza")).toBe(
+      "Alianza 3",
+    );
+  });
+
+  it("keeps a numbered name inside the length cap", () => {
+    const long = "X".repeat(NAME_MAX);
+    const next = uniqueName([{ playerId: "a", name: long, connected: true, isHost: true }], long);
+    expect(next.length).toBeLessThanOrEqual(NAME_MAX);
+    expect(next.endsWith(" 2")).toBe(true);
+  });
+
+  it("disambiguates on arrival — everyone shares one default name", () => {
+    const seats = seatPlayer(seatPlayer([], "a", "Your Team"), "b", "Your Team");
+    expect(seats.map((s) => s.name)).toEqual(["Your Team", "Your Team 2"]);
   });
 });

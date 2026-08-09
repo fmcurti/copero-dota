@@ -24,6 +24,7 @@ export default function App() {
           </Link>
           <nav className="flex gap-6">
             {navLink("/", "Versus")}
+            {navLink("/watch", "Watch")}
             {navLink("/solo", "New Run")}
             {navLink("/history", "History")}
           </nav>

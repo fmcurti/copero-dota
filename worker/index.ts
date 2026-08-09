@@ -14,6 +14,7 @@ import { simulateTournament } from "../src/game/sim";
 import { computeStrength, swapHeroAssignment } from "../src/game/strength";
 import type { DataBundle, Pack, SimResult, SimTeam, TeamStrength } from "../src/game/types";
 import { autopick } from "../src/mp/autopick";
+import { listingKey, TOUCH_MS, type DirectoryEntry } from "../src/mp/directory";
 import {
   applyAction,
   boardRoster,
@@ -36,10 +37,13 @@ import {
   type Seat,
   type ServerMsg,
 } from "../src/mp/protocol";
-import { seatPlayer, unseatPlayer } from "../src/mp/seating";
+import { nameTaken, seatPlayer, unseatPlayer } from "../src/mp/seating";
+import { CoperoDirectory } from "./directory";
+import { DIRECTORY_ID, PROBE_HEADER, PROBE_PATH, PROBE_TOKEN } from "./probe";
 
 interface Env {
   CoperoRoom: DurableObjectNamespace;
+  CoperoDirectory: DurableObjectNamespace<CoperoDirectory>;
   ASSETS: Fetcher;
 }
 
@@ -98,6 +102,10 @@ export class CoperoRoom extends Server<Env> {
   private pool: Pack[] | null = null;
   private beats: Beat[] | null = null;
   private simResult: SimResult | null = null;
+  /** Last listing published, so an unchanged room costs nothing. In-memory on
+   *  purpose: a hibernation wake clears it and the next event re-announces. */
+  private lastListing: string | null = null;
+  private lastListingAt = 0;
 
   async onStart() {
     const stored = await this.ctx.storage.get<RoomState>("room");
@@ -106,6 +114,13 @@ export class CoperoRoom extends Server<Env> {
 
   private async save() {
     await this.ctx.storage.put("room", this.room);
+  }
+
+  /** Persist, tell the room, tell the world. Every mutation ends here. */
+  private async sync() {
+    await this.save();
+    this.broadcastSnapshot();
+    this.publishDirectory();
   }
 
   private snapshot(): RoomSnapshot {
@@ -222,8 +237,97 @@ export class CoperoRoom extends Server<Env> {
       this.room.seats = nextSeats;
       conn.setState({ playerId, name, spectating: !seated });
     }
-    await this.save();
-    this.broadcastSnapshot();
+    await this.sync();
+  }
+
+  // ---- directory ----
+
+  /**
+   * This room's public listing, or null if it must not be advertised.
+   *
+   * Every rule about who can find a room lives here and nowhere else, so a
+   * listing that exists is a listing that is safe to show to anyone — the
+   * directory can never leak a private room's code.
+   */
+  private listingFor(): DirectoryEntry | null {
+    const r = this.room;
+    const visibility = r.config.visibility;
+    if (visibility === "private") return null;
+    if (r.phase === "done") return null;
+    // Spectatable rooms stay hidden until there is something to spectate.
+    if (visibility === "spectatable" && r.phase === "lobby") return null;
+
+    const seated = new Set(r.seats.map((s) => s.playerId));
+    const here = new Set<string>();
+    let watchers = 0;
+    for (const c of this.getConnections()) {
+      const st = c.state as ConnState;
+      if (!st?.playerId || here.has(st.playerId)) continue;
+      here.add(st.playerId);
+      if (!seated.has(st.playerId)) watchers++;
+    }
+    // Nobody home, nothing to advertise — in any phase. This one rule is what
+    // keeps abandoned rooms off the lists without a reaper chasing them.
+    if (here.size === 0) return null;
+
+    return {
+      code: this.name,
+      visibility,
+      phase: r.phase,
+      seats: r.seats.length,
+      maxSeats: MAX_SEATS,
+      host: r.seats.find((s) => s.isHost)?.name ?? "",
+      teams: r.seats.map((s) => s.name),
+      watchers,
+      rev: Date.now(),
+    };
+  }
+
+  /**
+   * Announce (or retract) this room. Deliberately not awaited: the directory
+   * is one object in one colo, a draft action must never wait on it, and a
+   * throw here would trip handleMessage's catch-all and roll the room back.
+   */
+  private publishDirectory() {
+    let entry: DirectoryEntry | null = null;
+    try {
+      entry = this.listingFor();
+    } catch (e) {
+      console.error("directory: could not build listing:", e);
+      return;
+    }
+    const key = listingKey(entry);
+    const now = Date.now();
+    // Nothing visible changed, and the entry is not close to going stale.
+    if (key === this.lastListing && (entry === null || now - this.lastListingAt < TOUCH_MS)) return;
+    this.lastListing = key;
+    this.lastListingAt = now;
+
+    const ns = this.env.CoperoDirectory;
+    const stub = ns.get(ns.idFromName(DIRECTORY_ID));
+    this.ctx.waitUntil(
+      stub.publish(this.name, entry).catch((e: unknown) => {
+        console.error("directory: publish failed:", e);
+        this.lastListing = null; // retry on the next change
+      }),
+    );
+  }
+
+  /**
+   * The directory's liveness probe. Server.fetch() runs onStart before this,
+   * so the room is hydrated even on a cold wake — which is exactly why the
+   * probe comes in over fetch and not as an RPC method (RPC skips init).
+   */
+  async onRequest(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    if (url.pathname !== PROBE_PATH || request.headers.get(PROBE_HEADER) !== PROBE_TOKEN) {
+      return new Response("Not found", { status: 404 });
+    }
+    const entry = this.listingFor();
+    // The reply is itself a publish — the directory re-stamps from it.
+    this.lastListing = listingKey(entry);
+    this.lastListingAt = Date.now();
+    return Response.json({ entry });
   }
 
   private connectedIds(): Set<string> {
@@ -249,6 +353,9 @@ export class CoperoRoom extends Server<Env> {
       await this.save();
       this.broadcastSnapshot();
     }
+    // Always, even when no seat flag moved: a spectator leaving changes the
+    // watcher count, and the last person out must take the listing down.
+    this.publishDirectory();
     if (this.room.phase === "done" && ids.size === 0) {
       await this.ctx.storage.setAlarm(Date.now() + CLEANUP_MS);
     }
@@ -292,8 +399,7 @@ export class CoperoRoom extends Server<Env> {
         return this.sendError(conn, "bad-phase", "Seats are locked after the draft starts.");
       this.room.seats = unseatPlayer(this.room.seats, playerId);
       conn.setState({ ...connection, spectating: true });
-      await this.save();
-      this.broadcastSnapshot();
+      await this.sync();
       return;
     }
 
@@ -305,14 +411,35 @@ export class CoperoRoom extends Server<Env> {
         return this.sendError(conn, "room-full", "Room is full.");
       this.room.seats = seatPlayer(this.room.seats, playerId, connection.name);
       conn.setState({ ...connection, spectating: false });
-      await this.save();
-      this.broadcastSnapshot();
+      await this.sync();
       return;
     }
 
     const seat = this.room.seats.findIndex((s) => s.playerId === playerId);
     if (seat < 0) return this.sendError(conn, "no-seat", "You are not seated in this room.");
     const isHost = this.room.seats[seat].isHost;
+
+    if (msg.t === "kick") {
+      if (!isHost) return this.sendError(conn, "not-host", "Only the host can remove drafters.");
+      if (this.room.phase !== "lobby")
+        return this.sendError(conn, "bad-phase", "Seats are locked after the draft starts.");
+      if (msg.playerId === playerId)
+        return this.sendError(conn, "bad-target", "You can't remove yourself — spectate instead.");
+      if (!this.room.seats.some((s) => s.playerId === msg.playerId))
+        return this.sendError(conn, "bad-target", "That drafter is not seated.");
+
+      this.room.seats = unseatPlayer(this.room.seats, msg.playerId);
+      // A kick is a nudge, not a ban: they stay connected as a spectator and
+      // may claim a seat again. We deliberately keep no memory of it.
+      for (const c of this.getConnections()) {
+        const st = c.state as ConnState;
+        if (st?.playerId !== msg.playerId) continue;
+        c.setState({ ...st, spectating: true });
+        this.sendError(c, "kicked", "The host removed you from the lobby.");
+      }
+      await this.sync();
+      return;
+    }
 
     switch (msg.t) {
       case "configure": {
@@ -330,6 +457,8 @@ export class CoperoRoom extends Server<Env> {
           return this.sendError(conn, "bad-name", "Names can't contain “(you)”.");
         const name = sanitizeName(raw);
         if (!name) return this.sendError(conn, "bad-name", "Name cannot be empty.");
+        if (nameTaken(this.room.seats, name, playerId))
+          return this.sendError(conn, "name-taken", `“${name}” is already taken in this room.`);
         this.room.seats[seat].name = name;
         conn.setState({ ...connection, name });
         break;
@@ -437,8 +566,7 @@ export class CoperoRoom extends Server<Env> {
       default:
         return this.sendError(conn, "unknown", "Unknown message.");
     }
-    await this.save();
-    this.broadcastSnapshot();
+    await this.sync();
   }
 
   // ---- draft plumbing ----
@@ -460,8 +588,7 @@ export class CoperoRoom extends Server<Env> {
     } else {
       await this.armTurnAlarm();
     }
-    await this.save();
-    this.broadcastSnapshot();
+    await this.sync();
   }
 
   private async armTurnAlarm() {
@@ -551,12 +678,15 @@ export class CoperoRoom extends Server<Env> {
       } else {
         await this.ctx.storage.setAlarm(Date.now() + beats[idx].ms);
       }
-      await this.save();
-      this.broadcastSnapshot();
+      await this.sync();
       return;
     }
     if (r.phase === "done" && this.connectedIds().size === 0) {
       await this.ctx.storage.deleteAll();
+      // deleteAll wipes storage but not this object — without the reset, a
+      // directory probe arriving before eviction would describe a dead room.
+      this.room = freshRoom();
+      this.publishDirectory();
     }
   }
 }
@@ -582,11 +712,36 @@ function sanitizeConfig(c: MpConfig): MpConfig {
     heroAlloc: c.heroAlloc === "manual" ? "manual" : "auto",
     timerSecs: c.timerSecs === 7 || c.timerSecs === 25 || c.timerSecs === null ? c.timerSecs : 15,
     mulligans: c.mulligans === 0 || c.mulligans === 2 ? c.mulligans : 1,
+    // Rooms that predate the directory have no visibility at all — falling to
+    // "private" keeps them exactly as discoverable as they were before.
+    visibility:
+      c.visibility === "public" || c.visibility === "spectatable" ? c.visibility : "private",
   };
 }
 
+export { CoperoDirectory };
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    const url = new URL(request.url);
+
+    if (url.pathname === "/api/rooms") {
+      const ns = env.CoperoDirectory;
+      const data = await ns.get(ns.idFromName(DIRECTORY_ID)).list();
+      return Response.json(data, { headers: { "cache-control": "no-store" } });
+    }
+
+    // routePartykitRequest routes EVERY Durable Object binding by kebab-cased
+    // name, so the directory and the rooms' internal probe endpoint would both
+    // be reachable from the internet. Rooms take websockets and nothing else;
+    // the directory takes nothing at all.
+    if (url.pathname.startsWith("/parties/")) {
+      const isWebSocket = request.headers.get("Upgrade")?.toLowerCase() === "websocket";
+      if (!isWebSocket || url.pathname.startsWith("/parties/copero-directory/")) {
+        return new Response("Not found", { status: 404 });
+      }
+    }
+
     return (
       (await routePartykitRequest(request, env as unknown as Record<string, unknown>)) ??
       env.ASSETS.fetch(request)

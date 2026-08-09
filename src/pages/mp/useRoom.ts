@@ -5,6 +5,14 @@ import type { ClientMsg, RoomSnapshot, ServerMsg } from "../../mp/protocol";
 const PLAYER_ID_KEY = "copero-player-id";
 const spectatorKey = (code: string) => `copero-mp-spectator:${code}`;
 
+/**
+ * Arrive as a viewer instead of taking a seat. Must be set BEFORE the room
+ * page mounts — useRoom reads it once, when it opens the socket.
+ */
+export function watchOnly(code: string) {
+  localStorage.setItem(spectatorKey(code), "1");
+}
+
 /** Stable per-browser identity — survives reloads, powers reconnects. */
 export function getPlayerId(): string {
   let id = localStorage.getItem(PLAYER_ID_KEY);

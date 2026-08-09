@@ -1,13 +1,19 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { Section } from "../../components/options";
 import { useRunStore } from "../../game/store";
+import { liveGames, openLobbies } from "../../mp/directory";
 import { makeRoomCode } from "../../mp/protocol";
+import { RoomRow } from "./RoomRow";
+import { useRooms } from "./useRooms";
 
 export default function Versus() {
   const navigate = useNavigate();
   const { teamName, setTeamName } = useRunStore();
   const [joinCode, setJoinCode] = useState("");
+  const { rooms, now, loaded } = useRooms();
+  const open = openLobbies(rooms, now());
+  const live = liveGames(rooms, now());
 
   const join = () => {
     const code = joinCode.trim().toUpperCase();
@@ -69,6 +75,37 @@ export default function Versus() {
             >
               Join
             </button>
+          </div>
+        </Section>
+      </div>
+
+      <div className="mt-10">
+        <Section label="Open lobbies">
+          <div className="w-full space-y-2">
+            {open.length ? (
+              open.map((room) => (
+                <RoomRow
+                  key={room.code}
+                  room={room}
+                  action="Join"
+                  onAction={() => navigate(`/mp/${room.code}`)}
+                />
+              ))
+            ) : (
+              <p className="text-sm text-slate-dim">
+                {loaded
+                  ? "No public lobbies right now. Create one and set it to Public."
+                  : "Looking for lobbies…"}
+              </p>
+            )}
+            {live.length > 0 && (
+              <Link
+                to="/watch"
+                className="plate inline-block pt-2 text-xs tracking-widest text-slate-mid hover:text-bone"
+              >
+                {live.length} {live.length === 1 ? "game" : "games"} live · watch →
+              </Link>
+            )}
           </div>
         </Section>
       </div>
