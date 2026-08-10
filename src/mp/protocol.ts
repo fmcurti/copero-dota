@@ -111,7 +111,8 @@ export interface RoomSnapshot {
   field: SimTeam[] | null;
   simSeed: number | null;
   // broadcasting →
-  beat: { idx: number; playing: boolean } | null;
+  /** `count` = the server's beat total, a desync tripwire for the client. */
+  beat: { idx: number; playing: boolean; count?: number } | null;
   /**
    * The victory phrase for the current taunt beat, if any. Phrases live only
    * on the server — this is the single moment one is ever sent to clients.

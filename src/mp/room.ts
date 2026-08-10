@@ -1,4 +1,4 @@
-import { DEV_TAUNT_ALL, type Beat } from "../game/beats";
+import { pickTaunt, tauntOwner, type Beat } from "../game/beats";
 import { generateFieldMulti } from "../game/field";
 import { luckTraitFor } from "../game/luck";
 import { seeded, type Rng } from "../game/rng";
@@ -501,13 +501,12 @@ export function currentTaunt(
   const b = beats[Math.min(r.beat.idx, beats.length - 1)];
   if (b.kind !== "taunt") return null;
   const m = result.rounds[b.roundIdx]?.matches[b.matchIdx];
-  const ownerId = m?.winner.ownerId;
-  // dev preview taunts every human win; prod requires a human loser too
-  if (!m || ownerId == null || (!DEV_TAUNT_ALL && m.loser.ownerId == null)) return null;
+  if (!m) return null;
+  const ownerId = tauntOwner(m);
+  if (ownerId == null) return null;
   const phrases = r.phrases[ownerId];
   if (!phrases?.length) return null;
-  const pick = ((r.simSeed >>> 0) + b.roundIdx * 1009 + b.matchIdx * 101) % phrases.length;
-  return { ownerId, phrase: phrases[pick] };
+  return { ownerId, phrase: pickTaunt(r.simSeed, b.roundIdx, b.matchIdx, phrases) };
 }
 
 /** The full public snapshot — one type serves every seat and spectator. */
@@ -536,7 +535,8 @@ export function snapshotOf(r: RoomState, sim: SimProvider): RoomSnapshot {
     heroAssignments: r.heroAssignments,
     field: r.field,
     simSeed: r.simSeed,
-    beat: r.beat,
+    // count: the client rebuilds the beat list locally and asserts agreement.
+    beat: r.beat ? { ...r.beat, count: sim().beats.length } : null,
     taunt: currentTaunt(r, sim),
   };
 }

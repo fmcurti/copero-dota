@@ -1,4 +1,5 @@
-import type { SimResult } from "./types";
+import { matchdayCount } from "./sim";
+import type { BracketMatch, SimResult } from "./types";
 
 // ---------------------------------------------------------------------------
 // Broadcast beat schedule — pure and React-free so both the solo client and
@@ -60,7 +61,7 @@ export function buildBeats(result: SimResult, tauntAll: boolean = DEV_TAUNT_ALL)
   beats.push({ kind: "intro", ms: INTRO_MS });
 
   // Live group stage: both groups tick matchday by matchday.
-  const matchdays = result.groupMatches.reduce((m, g) => Math.max(m, g.round + 1), 0);
+  const matchdays = matchdayCount(result);
   beats.push({ kind: "groupRound", upTo: 0, ms: GROUP_OPEN_MS });
   for (let day = 1; day <= matchdays; day++) {
     beats.push({ kind: "groupRound", upTo: day, ms: GROUP_TICK_MS });
@@ -77,10 +78,7 @@ export function buildBeats(result: SimResult, tauntAll: boolean = DEV_TAUNT_ALL)
         for (let upTo = 1; upTo <= m.games.length; upTo++) {
           beats.push({ kind: "game", roundIdx, matchIdx, upTo, ms: GAME_MS });
         }
-        const tauntable = tauntAll
-          ? m.winner.ownerId != null // dev preview: any series a human wins
-          : m.a.ownerId != null && m.b.ownerId != null;
-        if (tauntable) {
+        if (tauntOwner(m, tauntAll) != null) {
           beats.push({ kind: "taunt", roundIdx, matchIdx, ms: TAUNT_MS });
         }
       }
@@ -88,4 +86,112 @@ export function buildBeats(result: SimResult, tauntAll: boolean = DEV_TAUNT_ALL)
   }
   beats.push({ kind: "standings", ms: 0 });
   return beats;
+}
+
+// ---------------------------------------------------------------------------
+// The meaning of a beat. Everything below answers "beat N is on screen —
+// what does that show?" in one place, for the renderer, the room server,
+// and the tests alike.
+// ---------------------------------------------------------------------------
+
+/**
+ * Whose victory phrase a taunt on this series belongs to, or null if the
+ * series taunts nobody. The single statement of taunt eligibility: dev
+ * preview taunts any series a human wins; production needs a human loser too.
+ */
+export function tauntOwner(m: BracketMatch, tauntAll: boolean = DEV_TAUNT_ALL): string | null {
+  const eligible = tauntAll
+    ? m.winner.ownerId != null
+    : m.a.ownerId != null && m.b.ownerId != null;
+  return eligible ? m.winner.ownerId : null;
+}
+
+/** One deterministic stream per series — seeds the taunt pick AND the scream
+ *  bubble's jagged shape, identically on every client and the server. */
+export function seriesSeed(simSeed: number, roundIdx: number, matchIdx: number): number {
+  return (simSeed >>> 0) + roundIdx * 1009 + matchIdx * 101;
+}
+
+/** The winner's phrase for a series — same index wherever it is resolved. */
+export function pickTaunt(
+  simSeed: number,
+  roundIdx: number,
+  matchIdx: number,
+  phrases: string[],
+): string {
+  return phrases[seriesSeed(simSeed, roundIdx, matchIdx) % phrases.length];
+}
+
+/** Everything beat `idx` puts on screen. */
+export interface RevealState {
+  /** The current beat (idx clamped to the schedule). */
+  cur: Beat;
+  /** On the last beat: the reveal is over, show the ceremony. */
+  done: boolean;
+  /** Total group matchdays. */
+  days: number;
+  /** Matchdays already on screen, or null before the group boards mount. */
+  groupUpTo: number | null;
+  /** hidden → live (ticker running, final matchday included) → stamped (cuts in). */
+  groupPhase: "hidden" | "live" | "stamped";
+  /** Bracket rounds revealed so far. */
+  roundsShown: Set<number>;
+  /** Games revealed per human series, keyed `${roundIdx}-${matchIdx}`. */
+  humanGames: Map<string, number>;
+  /** The human series in the fixed clash strip right now, if any. */
+  clash: { roundIdx: number; matchIdx: number } | null;
+  /** Broadcast-bar label for this moment. */
+  phaseLabel: string;
+}
+
+/** Fold the schedule up to `idx` into what is visible — the reveal state machine. */
+export function revealAt(result: SimResult, beats: Beat[], idx: number): RevealState {
+  const clamped = Math.min(idx, beats.length - 1);
+  const cur = beats[clamped];
+  const done = clamped >= beats.length - 1;
+  const days = matchdayCount(result);
+
+  let groupUpTo: number | null = null;
+  let stamped = false;
+  const roundsShown = new Set<number>();
+  const humanGames = new Map<string, number>();
+  for (let i = 0; i <= clamped; i++) {
+    const b = beats[i];
+    if (b.kind === "groupRound") groupUpTo = Math.max(groupUpTo ?? 0, b.upTo);
+    else if (b.kind === "groupDone") stamped = true;
+    else if (b.kind === "round") roundsShown.add(b.roundIdx);
+    else if (b.kind === "game") {
+      const key = `${b.roundIdx}-${b.matchIdx}`;
+      humanGames.set(key, Math.max(humanGames.get(key) ?? 0, b.upTo));
+    }
+  }
+
+  const clash =
+    !done && (cur.kind === "clash" || cur.kind === "game" || cur.kind === "taunt")
+      ? { roundIdx: cur.roundIdx, matchIdx: cur.matchIdx }
+      : null;
+
+  const phaseLabel = done
+    ? "Ceremonia"
+    : cur.kind === "intro"
+      ? "Opening"
+      : cur.kind === "groupRound" || cur.kind === "groupDone"
+        ? `Fase de Grupos${cur.kind === "groupRound" && cur.upTo > 0 ? ` · Jornada ${cur.upTo}/${days}` : ""}`
+        : cur.kind === "standings"
+          ? "Ceremonia"
+          : (result.rounds[cur.roundIdx]?.name ?? "");
+
+  return {
+    cur,
+    done,
+    days,
+    groupUpTo,
+    // Live until the cuts stamp: the final matchday (upTo === days) ticks in
+    // with its wash and dots like every other day; "Final" waits for groupDone.
+    groupPhase: groupUpTo == null ? "hidden" : stamped ? "stamped" : "live",
+    roundsShown,
+    humanGames,
+    clash,
+    phaseLabel,
+  };
 }

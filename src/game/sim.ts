@@ -28,6 +28,42 @@ export function winProb(a: SimTeam, b: SimTeam): number {
   return 1 / (1 + Math.pow(10, -(a.strength - b.strength) / ELO_DIVISOR));
 }
 
+/** The group tiebreak: wins, then seeded strength, then stable id. */
+const groupTiebreak = (x: GroupStanding, y: GroupStanding): number =>
+  y.wins - x.wins || y.team.strength - x.team.strength || x.team.id.localeCompare(y.team.id);
+
+/** Total group matchdays in a finished sim. */
+export function matchdayCount(result: SimResult): number {
+  return result.groupMatches.reduce((m, g) => Math.max(m, g.round + 1), 0);
+}
+
+/**
+ * Standings after the first `days` matchdays — the exact table the sim would
+ * print at that moment (same tiebreak). The reveal's live ticker replays the
+ * group stage through this, so the final table always matches the sim's own.
+ */
+export function standingsAfter(
+  result: SimResult,
+  group: "A" | "B",
+  days: number,
+): GroupStanding[] {
+  if (days >= matchdayCount(result)) return result.groups[group]; // final: the sim's own table
+  const teams = result.groupAssign.filter((g) => g.group === group).map((g) => g.team);
+  const wins = new Map(teams.map((t) => [t.id, 0]));
+  const losses = new Map(teams.map((t) => [t.id, 0]));
+  for (const m of result.groupMatches) {
+    if (m.group !== group || m.round >= days) continue;
+    const aWins = m.games.filter((g) => g === "a").length;
+    wins.set(m.a.id, wins.get(m.a.id)! + aWins);
+    losses.set(m.a.id, losses.get(m.a.id)! + (m.games.length - aWins));
+    wins.set(m.b.id, wins.get(m.b.id)! + (m.games.length - aWins));
+    losses.set(m.b.id, losses.get(m.b.id)! + aWins);
+  }
+  return teams
+    .map((t) => ({ team: t, wins: wins.get(t.id)!, losses: losses.get(t.id)! }))
+    .sort(groupTiebreak);
+}
+
 /**
  * One game. Luck traits roll per game BEFORE the result: a proc takes the
  * game outright — la suerte del carreado doesn't negotiate with Elo. If both
@@ -130,10 +166,7 @@ function playGroup(
   );
   const standings = teams
     .map((t) => ({ team: t, wins: wins.get(t.id)!, losses: losses.get(t.id)! }))
-    .sort(
-      (x, y) =>
-        y.wins - x.wins || y.team.strength - x.team.strength || x.team.id.localeCompare(y.team.id),
-    );
+    .sort(groupTiebreak);
   return { rounds, standings };
 }
 

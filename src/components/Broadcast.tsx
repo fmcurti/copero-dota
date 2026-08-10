@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { buildBeats } from "../game/beats";
-import type { BracketMatch, GroupStanding, SimResult, SimTeam } from "../game/types";
+import { buildBeats, pickTaunt, revealAt, seriesSeed } from "../game/beats";
+import { standingsAfter } from "../game/sim";
+import type { BracketMatch, SimResult, SimTeam } from "../game/types";
 import { HumanTeamBadge } from "./HumanTeamBadge";
 
 // ---------------------------------------------------------------------------
@@ -20,29 +21,6 @@ type Highlight = "self" | "human" | null;
 
 const ROW_H = 32; // px per standings row
 const CUT_GAP = 10; // extra breathing room at the UB/LB/eliminated cuts
-
-/** Standings after the first `days` matchdays — mirrors the sim's tiebreak. */
-function standingsAfter(result: SimResult, group: "A" | "B", days: number): GroupStanding[] {
-  const total = result.groupMatches.reduce((m, g) => Math.max(m, g.round + 1), 0);
-  if (days >= total) return result.groups[group]; // final: use the sim's own table
-  const teams = result.groupAssign.filter((g) => g.group === group).map((g) => g.team);
-  const wins = new Map(teams.map((t) => [t.id, 0]));
-  const losses = new Map(teams.map((t) => [t.id, 0]));
-  for (const m of result.groupMatches) {
-    if (m.group !== group || m.round >= days) continue;
-    const aWins = m.games.filter((g) => g === "a").length;
-    wins.set(m.a.id, wins.get(m.a.id)! + aWins);
-    losses.set(m.a.id, losses.get(m.a.id)! + (m.games.length - aWins));
-    wins.set(m.b.id, wins.get(m.b.id)! + (m.games.length - aWins));
-    losses.set(m.b.id, losses.get(m.b.id)! + aWins);
-  }
-  return teams
-    .map((t) => ({ team: t, wins: wins.get(t.id)!, losses: losses.get(t.id)! }))
-    .sort(
-      (x, y) =>
-        y.wins - x.wins || y.team.strength - x.team.strength || x.team.id.localeCompare(y.team.id),
-    );
-}
 
 /** What this team did on a given matchday: one entry per game. */
 function dayGames(
@@ -72,14 +50,14 @@ function GroupBoard({
   result,
   upTo,
   days,
-  stamped,
+  phase,
   hl,
 }: {
   label: "A" | "B";
   result: SimResult;
   upTo: number; // matchdays already played
   days: number; // total matchdays
-  stamped: boolean; // qualification cuts revealed
+  phase: "live" | "stamped"; // ticking, or qualification cuts revealed
   hl: (t: SimTeam) => Highlight;
 }) {
   // Rows render in a STABLE order (seeded group order) and only their
@@ -91,7 +69,8 @@ function GroupBoard({
   );
   const standings = useMemo(() => standingsAfter(result, label, upTo), [result, label, upTo]);
   const byId = new Map(standings.map((s, i) => [s.team.id, { ...s, pos: i }]));
-  const live = !stamped && upTo < days;
+  const live = phase === "live";
+  const stamped = phase === "stamped";
   const boardH = teams.length * ROW_H + 2 * CUT_GAP;
   return (
     <div className="panel flex-1 rounded-xl p-3">
@@ -757,8 +736,9 @@ export function Broadcast({
   result: SimResult;
   teamName: string;
   footer?: React.ReactNode;
-  /** Versus mode: the server drives the reveal; disables the local timer. */
-  controlled?: { idx: number; playing: boolean };
+  /** Versus mode: the server drives the reveal; disables the local timer.
+   *  `count` is the server's beat total — a desync tripwire (see below). */
+  controlled?: { idx: number; playing: boolean; count?: number };
   /** Versus mode, host only: pause/resume/skip go to the server. */
   onControl?: (action: "pause" | "resume" | "skip") => void;
   /** Whose dots perspective and champion-plate line (defaults to the isUser team). */
@@ -779,16 +759,30 @@ export function Broadcast({
   const [localPlaying, setLocalPlaying] = useState(true);
   const idx = controlled ? Math.min(controlled.idx, beats.length - 1) : localIdx;
   const playing = controlled ? controlled.playing : localPlaying;
-  const done = idx >= beats.length - 1;
   const endRef = useRef<HTMLDivElement>(null);
+
+  // The server paces beat indices into a schedule this client rebuilt locally.
+  // Both derive it from the same (field, simSeed) — if the lengths ever differ
+  // (e.g. DEV_TAUNT_ALL compiled differently on the two sides), every client
+  // would silently render a different moment. Trip loudly instead.
+  useEffect(() => {
+    if (controlled?.count != null && controlled.count !== beats.length) {
+      console.warn(
+        `broadcast desync: server has ${controlled.count} beats, client built ${beats.length}`,
+      );
+    }
+  }, [controlled?.count, beats.length]);
+
+  // What this beat puts on screen — the reveal state machine lives in beats.ts.
+  const reveal = revealAt(result, beats, idx);
+  const { cur, done, days, groupUpTo, groupPhase, roundsShown, humanGames, clash, phaseLabel } =
+    reveal;
 
   useEffect(() => {
     if (controlled || !playing || done) return;
     const t = setTimeout(() => setLocalIdx((i) => i + 1), beats[idx].ms);
     return () => clearTimeout(t);
   }, [controlled, playing, done, idx, beats]);
-
-  const cur = beats[idx];
 
   // Scroll only when a new section lands (never during the group ticker).
   useEffect(() => {
@@ -812,53 +806,19 @@ export function Broadcast({
     t.ownerId == null ? null : t.ownerId === persp ? "self" : "human";
   const mine = persp != null ? (result.ownerStats[persp] ?? null) : null;
 
-  // Derive visibility from revealed beats.
-  const revealed = beats.slice(0, idx + 1);
-  const days = result.groupMatches.reduce((m, g) => Math.max(m, g.round + 1), 0);
-  let groupUpTo: number | null = null;
-  let groupsStamped = false;
-  const roundsShown = new Set<number>();
-  const humanGames = new Map<string, number>();
-  for (const b of revealed) {
-    if (b.kind === "groupRound") groupUpTo = Math.max(groupUpTo ?? 0, b.upTo);
-    else if (b.kind === "groupDone") groupsStamped = true;
-    else if (b.kind === "round") roundsShown.add(b.roundIdx);
-    else if (b.kind === "game") {
-      const key = `${b.roundIdx}-${b.matchIdx}`;
-      humanGames.set(key, Math.max(humanGames.get(key) ?? 0, b.upTo));
-    }
-  }
-  const clash =
-    !done && (cur.kind === "clash" || cur.kind === "game" || cur.kind === "taunt")
-      ? { roundIdx: cur.roundIdx, matchIdx: cur.matchIdx }
-      : null;
   const clashMatch = clash ? result.rounds[clash.roundIdx]?.matches[clash.matchIdx] : null;
 
   // Victory phrase: the server resolves it for the current taunt beat and
   // sends exactly one — sanity-check it belongs to this match's winner.
-  // Solo dev preview: no server, pick locally with the same seed formula.
+  // Solo dev preview: no server, pick locally with the same shared formula.
   let taunt: string | null = null;
   if (cur.kind === "taunt" && clashMatch) {
     if (serverTaunt?.ownerId === clashMatch.winner.ownerId) {
       taunt = serverTaunt.phrase;
     } else if (!serverTaunt && localTauntPhrases?.length && clashMatch.winner.ownerId != null) {
-      taunt =
-        localTauntPhrases[
-          ((result.seed >>> 0) + cur.roundIdx * 1009 + cur.matchIdx * 101) %
-            localTauntPhrases.length
-        ];
+      taunt = pickTaunt(result.seed, cur.roundIdx, cur.matchIdx, localTauntPhrases);
     }
   }
-
-  const phaseLabel = done
-    ? "Ceremonia"
-    : cur.kind === "intro"
-      ? "Opening"
-      : cur.kind === "groupRound" || cur.kind === "groupDone"
-        ? `Fase de Grupos${cur.kind === "groupRound" && cur.upTo > 0 ? ` · Jornada ${cur.upTo}/${days}` : ""}`
-        : cur.kind === "standings"
-          ? "Ceremonia"
-          : result.rounds[cur.roundIdx]?.name ?? "";
 
   const showControls = !done && (controlled ? onControl != null : true);
 
@@ -921,7 +881,7 @@ export function Broadcast({
             result={result}
             upTo={groupUpTo}
             days={days}
-            stamped={groupsStamped}
+            phase={groupPhase === "stamped" ? "stamped" : "live"}
             hl={hl}
           />
           <GroupBoard
@@ -929,7 +889,7 @@ export function Broadcast({
             result={result}
             upTo={groupUpTo}
             days={days}
-            stamped={groupsStamped}
+            phase={groupPhase === "stamped" ? "stamped" : "live"}
             hl={hl}
           />
         </div>
@@ -1017,7 +977,7 @@ export function Broadcast({
               : (humanGames.get(`${clash.roundIdx}-${clash.matchIdx}`) ?? 0)
           }
           taunt={taunt}
-          screamSeed={(result.seed >>> 0) + clash.roundIdx * 1009 + clash.matchIdx * 101}
+          screamSeed={seriesSeed(result.seed, clash.roundIdx, clash.matchIdx)}
           hl={hl}
         />
       )}

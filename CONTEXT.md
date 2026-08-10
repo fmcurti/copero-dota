@@ -17,8 +17,12 @@ tests, and reviews all say the same thing.
 - **Field** — the 18 `SimTeam`s that enter the International (human + AI).
 - **Sim** — the deterministic tournament: `simulateTournament(field, simSeed)`.
   Clients re-run it locally; the server only decides what is revealed when.
-- **Beat** — one step of the broadcast reveal (`src/game/beats.ts`). The beat
-  *schedule* is pure and shared by client and server.
+- **Beat** — one step of the broadcast reveal (`src/game/beats.ts`). Both the
+  *schedule* (`buildBeats`) and its *meaning* (`revealAt(result, beats, idx) →
+  RevealState`: what beat N puts on screen) are pure and shared by client and
+  server; `Broadcast.tsx` only renders the `RevealState`. Taunt identity lives
+  here too: `tauntOwner` (eligibility) and `seriesSeed`/`pickTaunt` (the one
+  formula for phrase choice and scream-bubble shape).
 - **Reveal / Broadcast** — the staged rendering of the sim, beat by beat.
 - **Win phrases** — a drafter's victory taunts. Server-side secret; exactly
   one leaves the server, on its taunt beat.
