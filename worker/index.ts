@@ -4,40 +4,29 @@ import {
   type Connection,
   type ConnectionContext,
 } from "partyserver";
-import { DEV_TAUNT_ALL, buildBeats, type Beat } from "../src/game/beats";
+import { buildBeats, type Beat } from "../src/game/beats";
 import { fetchBundle } from "../src/game/bundle";
 import { buildCardPool } from "../src/game/cards";
-import { generateFieldMulti } from "../src/game/field";
-import { luckTraitFor } from "../src/game/luck";
-import { randomSeed } from "../src/game/rng";
 import { simulateTournament } from "../src/game/sim";
-import { computeStrength, swapHeroAssignment } from "../src/game/strength";
-import type { DataBundle, Pack, SimResult, SimTeam, TeamStrength } from "../src/game/types";
-import { autopick } from "../src/mp/autopick";
+import type { DataBundle, Pack, SimResult } from "../src/game/types";
 import { listingKey, TOUCH_MS, type DirectoryEntry } from "../src/mp/directory";
 import {
-  applyAction,
-  boardRoster,
-  createDraft,
-  openSpread,
-  type EngineState,
-} from "../src/mp/engine";
-import {
-  DEFAULT_MP_CONFIG,
   DEFAULT_NAME,
   MAX_SEATS,
-  MIN_SEATS,
-  hasYouTag,
   sanitizeName,
-  sanitizeWinPhrases,
   type ClientMsg,
-  type MpConfig,
-  type Phase,
-  type RoomSnapshot,
-  type Seat,
   type ServerMsg,
 } from "../src/mp/protocol";
-import { nameTaken, seatPlayer, unseatPlayer } from "../src/mp/seating";
+import {
+  freshRoom,
+  migrateRoom,
+  needsData,
+  nextAlarm,
+  roomReducer,
+  snapshotOf,
+  type RoomEvent,
+  type RoomState,
+} from "../src/mp/room";
 import { CoperoDirectory } from "./directory";
 import { DIRECTORY_ID, PROBE_HEADER, PROBE_PATH, PROBE_TOKEN } from "./probe";
 
@@ -49,48 +38,17 @@ interface Env {
 
 // ---------------------------------------------------------------------------
 // One CoperoRoom = one lobby = one Durable Object. Server-authoritative:
-// clients send intents, the room validates them against the pure engine and
-// broadcasts a full snapshot on every change (room state is tiny).
+// clients send intents, the room validates them against the pure state
+// machine in src/mp/room.ts and broadcasts a full snapshot on every change.
+//
+// This class is the partyserver adapter at the Room seam: it owns sockets,
+// storage, the data bundle, the directory, and the one alarm slot — and
+// nothing else. Every rule lives in the reducer, where vitest can reach it.
 //
 // Hibernation-safe: the authoritative state lives in ctx.storage and is
 // rehydrated in onStart; the card pool and sim are recomputed on demand
-// (both are deterministic from stored config/seeds). The single DO alarm is
-// time-shared: turn timer while drafting, beat ticker while broadcasting,
-// self-cleanup once done and empty.
+// (both are deterministic from stored config/seeds).
 // ---------------------------------------------------------------------------
-
-interface RoomState {
-  phase: Phase;
-  config: MpConfig;
-  seats: Seat[];
-  engine: EngineState | null;
-  turnDeadline: number | null;
-  strengths: TeamStrength[] | null;
-  heroAssignments: Record<string, number>[] | null;
-  fieldSeed: number | null;
-  field: SimTeam[] | null;
-  simSeed: number | null;
-  beat: { idx: number; playing: boolean } | null;
-  /** Victory phrases by playerId — server-side secret until a taunt beat fires. */
-  phrases: Record<string, string[]>;
-}
-
-const freshRoom = (): RoomState => ({
-  phase: "lobby",
-  config: { ...DEFAULT_MP_CONFIG },
-  seats: [],
-  engine: null,
-  turnDeadline: null,
-  strengths: null,
-  heroAssignments: null,
-  fieldSeed: null,
-  field: null,
-  simSeed: null,
-  beat: null,
-  phrases: {},
-});
-
-const CLEANUP_MS = 60 * 60 * 1000;
 
 type ConnState = { playerId: string; name: string; spectating: boolean } | null;
 
@@ -100,8 +58,7 @@ export class CoperoRoom extends Server<Env> {
   room: RoomState = freshRoom();
   private bundle: DataBundle | null = null;
   private pool: Pack[] | null = null;
-  private beats: Beat[] | null = null;
-  private simResult: SimResult | null = null;
+  private sim: { beats: Beat[]; result: SimResult; forSeed: number | null } | null = null;
   /** Last listing published, so an unchanged room costs nothing. In-memory on
    *  purpose: a hibernation wake clears it and the next event re-announces. */
   private lastListing: string | null = null;
@@ -109,53 +66,65 @@ export class CoperoRoom extends Server<Env> {
 
   async onStart() {
     const stored = await this.ctx.storage.get<RoomState>("room");
-    if (stored) this.room = migrateRoom(stored);
+    if (stored) this.room = migrateRoom(stored, Date.now());
   }
 
-  private async save() {
-    await this.ctx.storage.put("room", this.room);
-  }
+  // ---- the seam: every event goes through the reducer, effects run here ----
 
-  /** Persist, tell the room, tell the world. Every mutation ends here. */
-  private async sync() {
-    await this.save();
-    this.broadcastSnapshot();
-    this.publishDirectory();
-  }
+  private async dispatch(event: RoomEvent, conn?: Connection) {
+    if (needsData(this.room, event)) await this.ensureData();
+    const now = Date.now();
+    const res = roomReducer(this.room, event, {
+      now,
+      random: Math.random,
+      data: this.pool && this.bundle ? { pool: this.pool, bundle: this.bundle } : null,
+      sim: () => this.ensureSim(),
+      connectedIds: () => this.connectedIds(),
+    });
+    this.room = res.state;
 
-  private snapshot(): RoomSnapshot {
-    const r = this.room;
-    const e = r.engine;
-    return {
-      phase: r.phase,
-      config: r.config,
-      seats: r.seats,
-      draft: e
-        ? {
-            packSeq: e.packSeq,
-            roundSeq: e.roundSeq,
-            openerSeat: e.openerSeat,
-            turnSeat: e.turnSeat,
-            turnDeadline: r.turnDeadline,
-            currentPacks: e.currentPacks,
-            boards: e.boards,
-            takenSteamIds: e.takenSteamIds,
-            deniedShelf: e.deniedShelf,
-            mulligansLeft: e.mulligansLeft,
-            deniesLeft: e.deniesLeft,
-          }
-        : null,
-      strengths: r.strengths,
-      heroAssignments: r.heroAssignments,
-      field: r.field,
-      simSeed: r.simSeed,
-      beat: r.beat,
-      taunt: this.currentTaunt(),
-    };
+    if (res.conns?.length || res.notify?.length) {
+      const apply = (c: Connection) => {
+        const st = c.state as ConnState;
+        if (!st?.playerId) return;
+        const patch = res.conns?.find((u) => u.playerId === st.playerId);
+        if (patch) c.setState({ ...st, ...patch });
+        const note = res.notify?.find((n) => n.playerId === st.playerId);
+        if (note) this.sendError(c, note.code, note.msg);
+      };
+      if (conn) apply(conn);
+      for (const c of this.getConnections()) if (c !== conn) apply(c);
+    }
+    if (res.reply && conn) this.sendError(conn, res.reply.code, res.reply.msg);
+
+    if (res.purge) {
+      await this.ctx.storage.deleteAll();
+      // deleteAll wipes storage but not this object — without the reset, a
+      // directory probe arriving before eviction would describe a dead room.
+      this.room = freshRoom();
+      this.publishDirectory();
+      return;
+    }
+
+    if (res.changed) {
+      await this.ctx.storage.put("room", this.room);
+      this.broadcastSnapshot();
+      this.publishDirectory();
+    } else if (event.type === "close") {
+      // A spectator leaving changes the watcher count even when no seat flag
+      // moved, and the last person out must take the listing down.
+      this.publishDirectory();
+    }
+
+    // Reconcile the one alarm slot to what the state says it should be.
+    const want = nextAlarm(this.room, { now, empty: this.connectedIds().size === 0 });
+    if (want == null) await this.ctx.storage.deleteAlarm();
+    else await this.ctx.storage.setAlarm(want);
   }
 
   private broadcastSnapshot() {
-    this.broadcast(JSON.stringify({ t: "snapshot", room: this.snapshot() } satisfies ServerMsg));
+    const snapshot = snapshotOf(this.room, () => this.ensureSim());
+    this.broadcast(JSON.stringify({ t: "snapshot", room: snapshot } satisfies ServerMsg));
   }
 
   private sendError(conn: Connection, code: string, msg: string) {
@@ -178,33 +147,13 @@ export class CoperoRoom extends Server<Env> {
       .packs;
   }
 
-  private ensureBeats(): Beat[] {
-    if (!this.beats) {
-      this.simResult = simulateTournament(this.room.field!, this.room.simSeed!);
-      this.beats = buildBeats(this.simResult);
+  /** The sim + beat schedule, memoized per simSeed (assemble rolls a new one). */
+  private ensureSim(): { beats: Beat[]; result: SimResult } {
+    if (!this.sim || this.sim.forSeed !== this.room.simSeed) {
+      const result = simulateTournament(this.room.field!, this.room.simSeed!);
+      this.sim = { beats: buildBeats(result), result, forSeed: this.room.simSeed };
     }
-    return this.beats;
-  }
-
-  /**
-   * The victory phrase for the current beat, if it is a taunt beat for a
-   * human-vs-human series whose winner wrote phrases. This is the only place
-   * a phrase ever leaves the server — and only one, at its moment.
-   */
-  private currentTaunt(): { ownerId: string; phrase: string } | null {
-    const r = this.room;
-    if (r.phase !== "broadcasting" || !r.beat || r.field == null || r.simSeed == null) return null;
-    const beats = this.ensureBeats();
-    const b = beats[Math.min(r.beat.idx, beats.length - 1)];
-    if (b.kind !== "taunt") return null;
-    const m = this.simResult?.rounds[b.roundIdx]?.matches[b.matchIdx];
-    const ownerId = m?.winner.ownerId;
-    // dev preview taunts every human win; prod requires a human loser too
-    if (!m || ownerId == null || (!DEV_TAUNT_ALL && m.loser.ownerId == null)) return null;
-    const phrases = r.phrases[ownerId];
-    if (!phrases?.length) return null;
-    const pick = ((r.simSeed >>> 0) + b.roundIdx * 1009 + b.matchIdx * 101) % phrases.length;
-    return { ownerId, phrase: phrases[pick] };
+    return this.sim;
   }
 
   // ---- connections ----
@@ -219,25 +168,18 @@ export class CoperoRoom extends Server<Env> {
       conn.close(4000, "no playerId");
       return;
     }
-    // Connections begin as viewers and are promoted only when they own/claim a seat.
+    // Connections begin as viewers; the reducer decides seat vs spectator.
     conn.setState({ playerId, name, spectating: true });
-    const seatIdx = this.room.seats.findIndex((s) => s.playerId === playerId);
-    if (seatIdx >= 0 && prefersSpectator && this.room.phase === "lobby") {
-      conn.setState({ playerId, name: this.room.seats[seatIdx].name, spectating: true });
-      this.room.seats = unseatPlayer(this.room.seats, playerId);
-    } else if (seatIdx >= 0) {
-      // Reattach only — never clobber the seat name (it may have been renamed
-      // in the lobby, and reconnects replay the stale query-string name).
-      const savedName = this.room.seats[seatIdx].name;
-      this.room.seats = seatPlayer(this.room.seats, playerId, name);
-      conn.setState({ playerId, name: savedName, spectating: false });
-    } else if (!prefersSpectator && this.room.phase === "lobby") {
-      const nextSeats = seatPlayer(this.room.seats, playerId, name);
-      const seated = nextSeats.length > this.room.seats.length;
-      this.room.seats = nextSeats;
-      conn.setState({ playerId, name, spectating: !seated });
-    }
-    await this.sync();
+    await this.dispatch({ type: "connect", playerId, name, prefersSpectator }, conn);
+  }
+
+  async onClose() {
+    await this.dispatch({ type: "close" });
+  }
+
+  async onError(conn: Connection, _err: Error) {
+    await this.onClose();
+    void conn;
   }
 
   // ---- directory ----
@@ -286,7 +228,7 @@ export class CoperoRoom extends Server<Env> {
   /**
    * Announce (or retract) this room. Deliberately not awaited: the directory
    * is one object in one colo, a draft action must never wait on it, and a
-   * throw here would trip handleMessage's catch-all and roll the room back.
+   * throw here would trip onMessage's catch-all and roll the room back.
    */
   private publishDirectory() {
     let entry: DirectoryEntry | null = null;
@@ -339,384 +281,35 @@ export class CoperoRoom extends Server<Env> {
     return ids;
   }
 
-  async onClose() {
-    const ids = this.connectedIds();
-    let changed = false;
-    for (const s of this.room.seats) {
-      const now = ids.has(s.playerId);
-      if (s.connected !== now) {
-        s.connected = now;
-        changed = true;
-      }
-    }
-    if (changed) {
-      await this.save();
-      this.broadcastSnapshot();
-    }
-    // Always, even when no seat flag moved: a spectator leaving changes the
-    // watcher count, and the last person out must take the listing down.
-    this.publishDirectory();
-    if (this.room.phase === "done" && ids.size === 0) {
-      await this.ctx.storage.setAlarm(Date.now() + CLEANUP_MS);
-    }
-  }
-
-  async onError(conn: Connection, _err: Error) {
-    await this.onClose();
-    void conn;
-  }
-
   // ---- messages ----
 
   async onMessage(conn: Connection, raw: string | ArrayBuffer) {
-    try {
-      await this.handleMessage(conn, raw);
-    } catch (e) {
-      // Never leave the room with half-applied in-memory state: fall back to
-      // the last persisted snapshot and tell everyone where we are.
-      console.error("room error, restoring from storage:", e);
-      const stored = await this.ctx.storage.get<RoomState>("room");
-      if (stored) this.room = stored;
-      this.sendError(conn, "internal", "Something went wrong — room state restored, try again.");
-      this.broadcastSnapshot();
-    }
-  }
-
-  private async handleMessage(conn: Connection, raw: string | ArrayBuffer) {
     let msg: ClientMsg;
     try {
       msg = JSON.parse(typeof raw === "string" ? raw : new TextDecoder().decode(raw));
     } catch {
       return this.sendError(conn, "bad-json", "Could not parse message.");
     }
-    const playerId = (conn.state as ConnState)?.playerId;
-    const connection = conn.state as ConnState;
-    if (!playerId || !connection)
-      return this.sendError(conn, "no-player-id", "Missing playerId.");
-
-    if (msg.t === "spectate") {
-      if (this.room.phase !== "lobby")
-        return this.sendError(conn, "bad-phase", "Seats are locked after the draft starts.");
-      this.room.seats = unseatPlayer(this.room.seats, playerId);
-      conn.setState({ ...connection, spectating: true });
-      await this.sync();
-      return;
+    const st = conn.state as ConnState;
+    if (!st?.playerId) return this.sendError(conn, "no-player-id", "Missing playerId.");
+    try {
+      await this.dispatch({ type: "message", playerId: st.playerId, connName: st.name, msg }, conn);
+    } catch (e) {
+      // The reducer works on a clone, so in-memory state is still the last
+      // accepted one — but re-anchor to storage anyway and tell everyone.
+      console.error("room error, restoring from storage:", e);
+      const stored = await this.ctx.storage.get<RoomState>("room");
+      if (stored) this.room = migrateRoom(stored, Date.now());
+      this.sendError(conn, "internal", "Something went wrong — room state restored, try again.");
+      this.broadcastSnapshot();
     }
-
-    if (msg.t === "takeSeat") {
-      if (this.room.phase !== "lobby")
-        return this.sendError(conn, "bad-phase", "Seats are locked after the draft starts.");
-      const alreadySeated = this.room.seats.some((seat) => seat.playerId === playerId);
-      if (!alreadySeated && this.room.seats.length >= MAX_SEATS)
-        return this.sendError(conn, "room-full", "Room is full.");
-      this.room.seats = seatPlayer(this.room.seats, playerId, connection.name);
-      conn.setState({ ...connection, spectating: false });
-      await this.sync();
-      return;
-    }
-
-    const seat = this.room.seats.findIndex((s) => s.playerId === playerId);
-    if (seat < 0) return this.sendError(conn, "no-seat", "You are not seated in this room.");
-    const isHost = this.room.seats[seat].isHost;
-
-    if (msg.t === "kick") {
-      if (!isHost) return this.sendError(conn, "not-host", "Only the host can remove drafters.");
-      if (this.room.phase !== "lobby")
-        return this.sendError(conn, "bad-phase", "Seats are locked after the draft starts.");
-      if (msg.playerId === playerId)
-        return this.sendError(conn, "bad-target", "You can't remove yourself — spectate instead.");
-      if (!this.room.seats.some((s) => s.playerId === msg.playerId))
-        return this.sendError(conn, "bad-target", "That drafter is not seated.");
-
-      this.room.seats = unseatPlayer(this.room.seats, msg.playerId);
-      // A kick is a nudge, not a ban: they stay connected as a spectator and
-      // may claim a seat again. We deliberately keep no memory of it.
-      for (const c of this.getConnections()) {
-        const st = c.state as ConnState;
-        if (st?.playerId !== msg.playerId) continue;
-        c.setState({ ...st, spectating: true });
-        this.sendError(c, "kicked", "The host removed you from the lobby.");
-      }
-      await this.sync();
-      return;
-    }
-
-    switch (msg.t) {
-      case "configure": {
-        if (!isHost) return this.sendError(conn, "not-host", "Only the host can configure.");
-        if (this.room.phase !== "lobby")
-          return this.sendError(conn, "bad-phase", "Config is locked after start.");
-        this.room.config = sanitizeConfig({ ...this.room.config, ...msg.config });
-        break;
-      }
-      case "rename": {
-        if (this.room.phase !== "lobby")
-          return this.sendError(conn, "bad-phase", "Names are locked after start.");
-        const raw = msg.name ?? "";
-        if (hasYouTag(raw))
-          return this.sendError(conn, "bad-name", "Names can't contain “(you)”.");
-        const name = sanitizeName(raw);
-        if (!name) return this.sendError(conn, "bad-name", "Name cannot be empty.");
-        if (nameTaken(this.room.seats, name, playerId))
-          return this.sendError(conn, "name-taken", `“${name}” is already taken in this room.`);
-        this.room.seats[seat].name = name;
-        conn.setState({ ...connection, name });
-        break;
-      }
-      case "phrases": {
-        const phrases = sanitizeWinPhrases(msg.phrases);
-        if (phrases.length) this.room.phrases[playerId!] = phrases;
-        else delete this.room.phrases[playerId!];
-        break;
-      }
-      case "start": {
-        if (!isHost) return this.sendError(conn, "not-host", "Only the host can start.");
-        if (this.room.phase !== "lobby")
-          return this.sendError(conn, "bad-phase", "Already started.");
-        if (this.room.seats.length < MIN_SEATS)
-          return this.sendError(conn, "need-players", `Need at least ${MIN_SEATS} drafters.`);
-        await this.ensureData();
-        this.room.engine = createDraft(this.room.seats.length, {
-          mulligans: this.room.config.mulligans,
-          // The first opener is drawn, not handed to the host — from there the
-          // usual rotation applies, so everyone still opens once per cycle.
-          openerSeat: Math.floor(Math.random() * this.room.seats.length),
-        });
-        this.room.phase = "drafting";
-        this.openUntilTurn();
-        await this.afterDraftStep();
-        return;
-      }
-      case "pick":
-      case "deny":
-      case "pass":
-      case "mulligan": {
-        if (this.room.phase !== "drafting" || !this.room.engine)
-          return this.sendError(conn, "bad-phase", "No draft in progress.");
-        // After a hibernation wake the pool is gone from memory; reload it
-        // BEFORE applying the action — finishing a pack needs it to open the next.
-        await this.ensureData();
-        const action =
-          msg.t === "pick"
-            ? ({ type: "pick", card: msg.card } as const)
-            : msg.t === "deny"
-              ? ({ type: "deny", card: msg.card } as const)
-              : msg.t === "pass"
-                ? ({ type: "pass" } as const)
-                : ({ type: "mulligan" } as const);
-        const r = applyAction(this.room.engine, seat, action);
-        if (r.error) return this.sendError(conn, r.error, `Illegal action (${r.error}).`);
-        this.room.engine = r.state;
-        this.openUntilTurn();
-        await this.afterDraftStep();
-        return;
-      }
-      case "assignHero": {
-        if (this.room.phase !== "assembled" || !this.room.engine)
-          return this.sendError(conn, "bad-phase", "Hero assignments are already locked.");
-        if (this.room.config.heroAlloc !== "manual")
-          return this.sendError(conn, "auto-assignment", "This room uses automatic hero assignment.");
-
-        const board = this.room.engine.boards[seat];
-        const roster = boardRoster(board);
-        if (!roster.some((p) => p.steamId === msg.steamId))
-          return this.sendError(conn, "bad-player", "That player is not on your roster.");
-        if (!board.heroes.includes(msg.heroId))
-          return this.sendError(conn, "bad-hero", "That hero is not on your roster.");
-
-        const assignments = this.room.heroAssignments;
-        if (!assignments?.[seat])
-          return this.sendError(conn, "no-assignment", "Hero assignments are unavailable.");
-        assignments[seat] = swapHeroAssignment(
-          assignments[seat],
-          String(msg.steamId),
-          msg.heroId,
-        );
-        await this.recomputeAssembled();
-        break;
-      }
-      case "play": {
-        if (!isHost) return this.sendError(conn, "not-host", "Only the host can play.");
-        if (this.room.phase !== "assembled")
-          return this.sendError(conn, "bad-phase", "Not ready to play.");
-        this.room.phase = "broadcasting";
-        this.room.beat = { idx: 0, playing: true };
-        const beats = this.ensureBeats();
-        await this.ctx.storage.setAlarm(Date.now() + beats[0].ms);
-        break;
-      }
-      case "beat": {
-        if (!isHost) return this.sendError(conn, "not-host", "Only the host controls the reveal.");
-        if (this.room.phase !== "broadcasting" || !this.room.beat)
-          return this.sendError(conn, "bad-phase", "No broadcast running.");
-        const beats = this.ensureBeats();
-        if (msg.action === "pause") {
-          this.room.beat.playing = false;
-          await this.ctx.storage.deleteAlarm();
-        } else if (msg.action === "resume") {
-          this.room.beat.playing = true;
-          await this.ctx.storage.setAlarm(Date.now() + beats[this.room.beat.idx].ms);
-        } else {
-          this.room.beat = { idx: beats.length - 1, playing: false };
-          this.room.phase = "done";
-          await this.ctx.storage.deleteAlarm();
-        }
-        break;
-      }
-      default:
-        return this.sendError(conn, "unknown", "Unknown message.");
-    }
-    await this.sync();
-  }
-
-  // ---- draft plumbing ----
-
-  /** Reveal spreads until someone has a turn (or the draft is done). */
-  private openUntilTurn() {
-    let e = this.room.engine!;
-    let guard = 0;
-    while (!e.done && !e.currentPacks.length && guard++ < 60) {
-      e = openSpread(e, this.pool!, Math.random);
-    }
-    this.room.engine = e;
-  }
-
-  private async afterDraftStep() {
-    const e = this.room.engine!;
-    if (e.done) {
-      await this.assemble();
-    } else {
-      await this.armTurnAlarm();
-    }
-    await this.sync();
-  }
-
-  private async armTurnAlarm() {
-    const e = this.room.engine;
-    const secs = this.room.config.timerSecs;
-    if (this.room.phase !== "drafting" || !e || e.turnSeat == null || secs == null) {
-      this.room.turnDeadline = null;
-      await this.ctx.storage.deleteAlarm();
-      return;
-    }
-    this.room.turnDeadline = Date.now() + secs * 1000;
-    await this.ctx.storage.setAlarm(this.room.turnDeadline);
-  }
-
-  private async assemble() {
-    await this.ensureData();
-    const e = this.room.engine!;
-    const b = this.bundle!;
-    const automaticStrengths = this.room.seats.map((_, i) =>
-      computeStrength(boardRoster(e.boards[i]), e.boards[i].heroes, b.playerHeroStats, b.squadSynergy, null),
-    );
-    this.room.heroAssignments = automaticStrengths.map((strength, i) => {
-      const assignment: Record<string, number> = {};
-      boardRoster(e.boards[i]).forEach((player, playerIndex) => {
-        const heroId = strength.assignment[playerIndex]?.heroId;
-        if (heroId != null) assignment[String(player.steamId)] = heroId;
-      });
-      return assignment;
-    });
-    this.room.fieldSeed = randomSeed();
-    await this.recomputeAssembled();
-    this.room.simSeed = randomSeed();
-    this.beats = null;
-    this.room.phase = "assembled";
-    this.room.turnDeadline = null;
-    await this.ctx.storage.deleteAlarm();
-  }
-
-  /** Recalculate strengths and the seeded field after a manual hero swap. */
-  private async recomputeAssembled() {
-    await this.ensureData();
-    const e = this.room.engine!;
-    const b = this.bundle!;
-    const strengths = this.room.seats.map((_, i) =>
-      computeStrength(
-        boardRoster(e.boards[i]),
-        e.boards[i].heroes,
-        b.playerHeroStats,
-        b.squadSynergy,
-        this.room.config.heroAlloc === "manual" ? (this.room.heroAssignments?.[i] ?? null) : null,
-      ),
-    );
-    this.room.strengths = strengths;
-    this.room.field = generateFieldMulti(
-      this.room.seats.map((s, i) => ({
-        ownerId: s.playerId,
-        name: s.name,
-        strength: strengths[i].overall,
-        luck: luckTraitFor(boardRoster(e.boards[i])),
-      })),
-      this.room.fieldSeed!,
-    );
   }
 
   // ---- the one alarm: turn timeout / beat ticker / cleanup ----
 
   async onAlarm() {
-    const r = this.room;
-    if (r.phase === "drafting" && r.engine && r.engine.turnSeat != null) {
-      if (r.turnDeadline == null || Date.now() < r.turnDeadline - 500) return; // stale
-      await this.ensureData();
-      const seat = r.engine.turnSeat;
-      const action = autopick(r.engine, seat, this.bundle!.playerHeroStats);
-      const res = applyAction(r.engine, seat, action);
-      if (!res.error) this.room.engine = res.state;
-      this.openUntilTurn();
-      await this.afterDraftStep();
-      return;
-    }
-    if (r.phase === "broadcasting" && r.beat) {
-      const beats = this.ensureBeats();
-      if (!r.beat.playing) return;
-      const idx = Math.min(r.beat.idx + 1, beats.length - 1);
-      r.beat = { idx, playing: idx < beats.length - 1 };
-      if (idx >= beats.length - 1) {
-        r.phase = "done";
-      } else {
-        await this.ctx.storage.setAlarm(Date.now() + beats[idx].ms);
-      }
-      await this.sync();
-      return;
-    }
-    if (r.phase === "done" && this.connectedIds().size === 0) {
-      await this.ctx.storage.deleteAll();
-      // deleteAll wipes storage but not this object — without the reset, a
-      // directory probe arriving before eviction would describe a dead room.
-      this.room = freshRoom();
-      this.publishDirectory();
-    }
+    await this.dispatch({ type: "alarm" });
   }
-}
-
-/** Rooms persisted before the spread refactor stored a single `currentPack`. */
-function migrateRoom(stored: RoomState): RoomState {
-  const e = stored.engine as (EngineState & { currentPack?: unknown }) | null;
-  if (e && !Array.isArray(e.currentPacks)) {
-    e.currentPacks = e.currentPack ? [e.currentPack as EngineState["currentPacks"][number]] : [];
-    delete e.currentPack;
-    e.roundSeq ??= e.packSeq;
-  }
-  stored.config = sanitizeConfig(stored.config);
-  stored.heroAssignments ??= null;
-  stored.phrases ??= {};
-  return stored;
-}
-
-function sanitizeConfig(c: MpConfig): MpConfig {
-  return {
-    format: c.format === "standard" ? "standard" : "valve_legacy",
-    cardMode: c.cardMode === "peak" || c.cardMode === "event" ? c.cardMode : "career",
-    heroAlloc: c.heroAlloc === "manual" ? "manual" : "auto",
-    timerSecs: c.timerSecs === 7 || c.timerSecs === 25 || c.timerSecs === null ? c.timerSecs : 15,
-    mulligans: c.mulligans === 0 || c.mulligans === 2 ? c.mulligans : 1,
-    // Rooms that predate the directory have no visibility at all — falling to
-    // "private" keeps them exactly as discoverable as they were before.
-    visibility:
-      c.visibility === "public" || c.visibility === "spectatable" ? c.visibility : "private",
-  };
 }
 
 export { CoperoDirectory };
