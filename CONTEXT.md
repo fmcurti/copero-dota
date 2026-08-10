@@ -48,6 +48,14 @@ tests, and reviews all say the same thing.
   harness in `src/mp/room.test.ts`. The host owns sockets, storage, the data
   bundle, the directory, and the one alarm slot; `nextAlarm(state)` tells it
   what that slot should hold.
+- **Room view** — what a snapshot means to one player, and what should
+  happen when the client's facts change (`src/mp/roomView.ts`).
+  `deriveRoomView(snapshot, playerId, result?) → RoomView` answers the
+  first (seat facts, the humans' final standings); **cues** answer the
+  second — `roomCues` (stinger, win-phrase resync, run recording) and
+  `draftCues` (the announcer's once-per-turn rule). All pure; the Room
+  page renders the view and executes cues through its adapters (socket,
+  announcer, localStorage, run history).
 - **Draft seed** — `RoomState.draftSeed`: every spread's pack RNG derives
   from it, so a draft replays exactly from `(seed, actions)`.
 - **Directory** — the public room listing. Policy is pure

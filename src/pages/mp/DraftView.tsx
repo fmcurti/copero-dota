@@ -6,6 +6,7 @@ import { eventShortName, heroImage } from "../../game/data";
 import { computeStrength, heroFitBonus } from "../../game/strength";
 import type { DataBundle, Hero, RosterPlayer, TeamStrength } from "../../game/types";
 import { legalActions, type EngineState } from "../../mp/engine";
+import { NO_DRAFT_CUES, draftCues } from "../../mp/roomView";
 import { synergyHints } from "../../mp/synergy";
 import type { Board, CardRef, ClientMsg, DraftPublic, RoomSnapshot } from "../../mp/protocol";
 import { announce, preloadAnnouncer } from "./announcer";
@@ -272,23 +273,20 @@ export function DraftView({
   const secsLeft =
     d.turnDeadline != null ? Math.max(0, Math.ceil((d.turnDeadline - now) / 1000)) : null;
 
-  // Dota announcer: "Your turn to pick" once per turn, "Five seconds remaining"
-  // once per turn when the clock runs low. Keyed by round+seat so back-to-back
-  // turns across rounds re-announce but mulligan replacements don't.
+  // Dota announcer. WHEN to speak is pure (draftCues in src/mp/roomView.ts);
+  // this effect just plays what it says, on every render — the cue state
+  // keeps repeats silent.
   useEffect(preloadAnnouncer, []);
-  const announcedTurn = useRef<string | null>(null);
-  const warnedTurn = useRef<string | null>(null);
+  const cueState = useRef(NO_DRAFT_CUES);
   useEffect(() => {
-    if (!myTurn) return;
-    const key = `${d.roundSeq}:${d.turnSeat}`;
-    if (announcedTurn.current !== key) {
-      announcedTurn.current = key;
-      announce("yourTurn");
-    }
-    if (secsLeft != null && secsLeft > 0 && secsLeft <= 5 && warnedTurn.current !== key) {
-      warnedTurn.current = key;
-      announce("fiveSeconds");
-    }
+    const r = draftCues(cueState.current, {
+      myTurn,
+      roundSeq: d.roundSeq,
+      turnSeat: d.turnSeat,
+      secsLeft,
+    });
+    cueState.current = r.state;
+    r.announce.forEach(announce);
   });
 
   const nickById = useMemo(() => {

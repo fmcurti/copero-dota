@@ -24,6 +24,12 @@ import {
   type Seat,
 } from "../../mp/protocol";
 import { nameTaken } from "../../mp/seating";
+import {
+  deriveRoomView,
+  roomCues,
+  type ClientFacts,
+  type RoomView,
+} from "../../mp/roomView";
 import { WinPhrasesEditor } from "../../components/WinPhrases";
 import { DraftView } from "./DraftView";
 import { useRoom, watchOnly } from "./useRoom";
@@ -32,8 +38,11 @@ export default function Room() {
   const { code = "" } = useParams();
   const [searchParams] = useSearchParams();
   // Shared watch links (/mp/CODE?spectator=1) must not take a seat. This has
-  // to run before useRoom opens the socket — that is when the flag is read.
-  if (searchParams.get("spectator") === "1") watchOnly(code);
+  // to run before useRoom opens the socket — that is when the flag is read,
+  // hence a lazy initializer instead of an effect.
+  useState(() => {
+    if (searchParams.get("spectator") === "1") watchOnly(code);
+  });
   const teamName = useRunStore((s) => s.teamName);
   const { playerId, snapshot, send, spectate, takeSeat, lastError, locked, opens } = useRoom(
     code,
@@ -42,28 +51,43 @@ export default function Room() {
   const { bundle, error } = useBundle();
   const heroById = useHeroById(bundle);
 
-  // Stinger when the host fires the draft (lobby → drafting for everyone).
   const [stinger, setStinger] = useState(false);
-  const prevPhase = useRef<string | null>(null);
-  useEffect(() => {
-    const phase = snapshot?.phase ?? null;
-    if (prevPhase.current === "lobby" && phase === "drafting") setStinger(true);
-    prevPhase.current = phase;
-  }, [snapshot?.phase]);
-
-  // Sync my victory phrases to my seat (the server rejects them while
-  // unseated). Re-fires on EVERY socket open: a reconnect can mean the server
-  // restarted (deploy, eviction) or an earlier send was never accepted —
-  // without the re-send, the room would stay phraseless forever.
   const winPhrases = useRunStore((s) => s.winPhrases);
-  const seated = snapshot?.seats.some((s) => s.playerId === playerId) ?? false;
+  const recordRun = useRunStore((s) => s.recordRun);
   const phrasesKey = winPhrases.join("\n");
+
+  // Clients re-run the sim locally; the server only paces the reveal.
+  const result = useMemo(
+    () =>
+      snapshot?.field && snapshot.simSeed != null
+        ? simulateTournament(snapshot.field, snapshot.simSeed)
+        : null,
+    [snapshot?.field, snapshot?.simSeed],
+  );
+  const view = useMemo(
+    () => (snapshot ? deriveRoomView(snapshot, playerId, result) : null),
+    [snapshot, playerId, result],
+  );
+
+  // What should happen is decided purely (src/mp/roomView.ts); this effect
+  // just executes the cues through the page's adapters. `opens` re-fires it
+  // after reconnects; partysocket buffers sends while connecting, so firing
+  // "early" is always safe. Run records dedupe on a localStorage key, so
+  // re-emitting them is harmless.
+  const prevFacts = useRef<ClientFacts | null>(null);
   useEffect(() => {
-    if (!seated) return;
-    // `opens` is a dep purely to re-fire after reconnects; partysocket
-    // buffers sends while connecting, so firing "early" is always safe.
-    send({ t: "phrases", phrases: phrasesKey ? phrasesKey.split("\n") : [] });
-  }, [seated, phrasesKey, send, opens]);
+    const facts: ClientFacts = { snapshot, result, playerId, code, opens, phrasesKey };
+    const cues = roomCues(prevFacts.current, facts, Date.now());
+    prevFacts.current = facts;
+    for (const cue of cues) {
+      if (cue.kind === "stinger") setStinger(true);
+      else if (cue.kind === "syncPhrases") send({ t: "phrases", phrases: cue.phrases });
+      else if (!localStorage.getItem(cue.dedupeKey)) {
+        localStorage.setItem(cue.dedupeKey, "1");
+        recordRun(cue.record);
+      }
+    }
+  }, [snapshot, result, playerId, code, opens, phrasesKey, send, recordRun]);
 
   if (locked) {
     return (
@@ -82,13 +106,11 @@ export default function Room() {
     );
   }
   if (error) return <div className="text-dire">Failed to load data: {error}</div>;
-  if (!snapshot || !bundle) {
+  if (!snapshot || !bundle || !view) {
     return <div className="text-center text-slate-dim">Conectando a la sala {code}…</div>;
   }
 
-  const mySeat = snapshot.seats.findIndex((s) => s.playerId === playerId);
-  const isHost = mySeat >= 0 && snapshot.seats[mySeat].isHost;
-  const isSpectator = mySeat < 0;
+  const { mySeat, isHost, isSpectator } = view;
 
   return (
     <div>
@@ -141,10 +163,9 @@ export default function Room() {
       )}
       {(snapshot.phase === "broadcasting" || snapshot.phase === "done") && (
         <BroadcastView
-          code={code}
           snapshot={snapshot}
-          mySeat={mySeat}
-          isHost={isHost}
+          view={view}
+          result={result}
           playerId={playerId}
           send={send}
           heroById={heroById}
@@ -634,96 +655,37 @@ function AssembledView({
 }
 
 function BroadcastView({
-  code,
   snapshot,
-  mySeat,
-  isHost,
+  view,
+  result,
   playerId,
   send,
   heroById,
 }: {
-  code: string;
   snapshot: RoomSnapshot;
-  mySeat: number;
-  isHost: boolean;
+  view: RoomView;
+  result: SimResult | null;
   playerId: string;
   send: (m: { t: "beat"; action: "pause" | "resume" | "skip" }) => void;
   heroById: Map<number, Hero>;
 }) {
   const navigate = useNavigate();
-  const recordRun = useRunStore((s) => s.recordRun);
   // Which drafts are open on the result panel. The winner starts expanded;
   // an entry here is an explicit toggle that overrides that default.
   const [openDrafts, setOpenDrafts] = useState<Record<string, boolean>>({});
-  const { field, simSeed, beat, seats, config } = snapshot;
-  const result: SimResult | null = useMemo(
-    () => (field && simSeed != null ? simulateTournament(field, simSeed) : null),
-    [field, simSeed],
-  );
-  const done = snapshot.phase === "done";
-  const myName = mySeat >= 0 ? seats[mySeat].name : "Spectator";
-
-  // Record my own result locally, once per (room, sim).
-  useEffect(() => {
-    if (!done || !result || mySeat < 0) return;
-    const stats = result.ownerStats[playerId];
-    if (!stats) return;
-    const key = `copero-mp-recorded:${code}:${result.seed}`;
-    if (localStorage.getItem(key)) return;
-    localStorage.setItem(key, "1");
-    const board = snapshot.draft?.boards[mySeat];
-    recordRun({
-      id: result.seed,
-      date: Date.now(),
-      place: stats.place,
-      label: `${stats.label} · vs ${seats.length - 1} amigo${seats.length > 2 ? "s" : ""}`,
-      overall: snapshot.strengths?.[mySeat]?.overall ?? 0,
-      undefeated: stats.undefeated,
-      flawlessGroup: stats.flawlessGroup,
-      gamesWon: stats.gamesWon,
-      gamesLost: stats.gamesLost,
-      champion: result.champion.name,
-      config: {
-        format: config.format,
-        cardMode: config.cardMode,
-        rerolls: 0,
-        heroAlloc: config.heroAlloc,
-      },
-      roster: board
-        ? SLOT_IDS.map((slot, playerIndex) => {
-            const p = board.slots[slot];
-            return p
-              ? {
-                  nickname: p.nickname,
-                  steamId: p.steamId,
-                  role: p.role,
-                  ovr: p.ovr,
-                  heroId:
-                    snapshot.strengths?.[mySeat]?.assignment[playerIndex]?.heroId ?? null,
-                }
-              : { nickname: "—", steamId: 0, role: "support" as const, ovr: 0, heroId: null };
-          })
-        : [],
-    });
-  }, [done, result, mySeat, playerId, code, recordRun, seats.length, snapshot, config]);
+  const { beat } = snapshot;
+  const { isHost } = view;
 
   if (!result || !beat) return <div className="text-slate-dim">Preparing broadcast…</div>;
-
-  const humanStandings = seats
-    .map((s, seatIdx) => ({ seat: s, seatIdx, stats: result.ownerStats[s.playerId] }))
-    .filter((x) => x.stats)
-    // Same placement (a shared 9–12th) is broken by games won, so the row at
-    // the top is always the one with the best tournament behind it.
-    .sort((a, b) => a.stats.place - b.stats.place || b.stats.gamesWon - a.stats.gamesWon);
 
   return (
     <Broadcast
       key={result.seed}
       result={result}
-      teamName={myName}
+      teamName={view.myName}
       perspectiveOwnerId={playerId}
       serverTaunt={snapshot.taunt}
-      controlled={{ idx: beat.idx, playing: beat.playing }}
+      controlled={{ idx: beat.idx, playing: beat.playing, count: beat.count }}
       onControl={isHost ? (action) => send({ t: "beat", action }) : undefined}
       footer={
         <div className="space-y-4">
@@ -735,7 +697,7 @@ function BroadcastView({
               Pick a team to see the draft behind the result.
             </p>
             <div className="space-y-1">
-              {humanStandings.map(({ seat, seatIdx, stats }, i) => {
+              {view.standings.map(({ seat, seatIdx, stats }, i) => {
                 const board = snapshot.draft?.boards[seatIdx];
                 const strength = snapshot.strengths?.[seatIdx];
                 const expanded = openDrafts[seat.playerId] ?? i === 0;
