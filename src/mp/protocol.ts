@@ -144,9 +144,9 @@ export const NAME_MAX = 30;
 export const DEFAULT_NAME = "Sin Nombre";
 
 /**
- * The boards rail marks your own team with a trailing "(you)". A team that
- * puts it in its own name reads as everyone's own board, so it's not allowed
- * — matched loosely enough that case and padding don't get around it.
+ * The UI reserves "(you)" as a self marker. A team that puts it in its own
+ * name can still read as everyone's own board, so it is not allowed — matched
+ * loosely enough that case and padding do not get around it.
  */
 const YOU_TAG = /\(\s*you\s*\)/i;
 

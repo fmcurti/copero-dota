@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CardButton, HeroCardContent, PlayerCardContent, ROLE_BAR, ovrColor } from "../../components/cards";
+import { HumanTeamBadge } from "../../components/HumanTeamBadge";
 import { SLOT_IDS, type Slots } from "../../game/draft";
 import { eventShortName, heroImage } from "../../game/data";
 import { computeStrength, heroFitBonus } from "../../game/strength";
@@ -138,10 +139,14 @@ function MiniBoard({
         <span
           className={`h-1.5 w-1.5 shrink-0 rounded-full ${connected ? "bg-bone" : "bg-ink-600"}`}
         />
-        <span className={`min-w-0 flex-1 truncate text-sm font-bold ${isTurn ? "text-bone" : "text-slate-strong"}`}>
+        <span
+          className={`min-w-0 flex-1 truncate text-sm font-bold ${
+            isTurn ? "text-bone" : "text-slate-strong"
+          }`}
+        >
           {name}
-          {isMe ? " (you)" : ""}
         </span>
+        {isMe && <HumanTeamBadge self />}
         {isTurn && <span className="plate text-[10px] tracking-widest text-bone">picking…</span>}
         {!isTurn && isOpener && (
           <span className="plate text-[10px] tracking-widest text-slate-dim">opens</span>

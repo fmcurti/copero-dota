@@ -7,7 +7,8 @@ import type { LuckTrait, SimTeam } from "./types";
 // ---------------------------------------------------------------------------
 
 export const FIELD_OPPONENTS = 17;
-const AI_MEAN = 86;
+export const SOLO_AI_MEAN = 86;
+export const MULTI_AI_MEAN_CAP = SOLO_AI_MEAN + 2;
 const AI_SD = 5;
 const AI_MIN = 76;
 const AI_MAX = 99;
@@ -121,13 +122,19 @@ export interface HumanSeed {
   luck?: LuckTrait;
 }
 
+export function multiplayerAiMean(humans: HumanSeed[]): number {
+  const humanMean = Math.round(
+    humans.reduce((sum, human) => sum + human.strength, 0) / Math.max(1, humans.length),
+  );
+  return Math.min(MULTI_AI_MEAN_CAP, humanMean - 4);
+}
+
 /**
  * Field for N human teams + (18 − N) AI teams. AI strength scales to the
  * lobby but sits BELOW the human average (mean = avg − 4) so the humans seed
- * high and meet each other in the bracket — simulated at −4, bracket
- * head-to-heads roughly double vs the old avg+1 while bots still take ~85%
- * of Coperos. `aiMean` pins it instead (solo pins 86 to keep the original
- * difficulty).
+ * high and meet each other in the bracket. The mean is capped at two points
+ * above solo difficulty so an exceptional lobby does not make every bot elite.
+ * `aiMean` pins it instead (solo pins 86 to keep the original difficulty).
  */
 export function generateFieldMulti(
   humans: HumanSeed[],
@@ -135,9 +142,7 @@ export function generateFieldMulti(
   aiMean?: number,
 ): SimTeam[] {
   const rng = mulberry32(fieldSeed);
-  const mean =
-    aiMean ??
-    Math.round(humans.reduce((s, h) => s + h.strength, 0) / Math.max(1, humans.length)) - 4;
+  const mean = aiMean ?? multiplayerAiMean(humans);
   const opponents = generateTeamNames(rng, FIELD_SIZE - humans.length).map((name, i) => ({
     id: `opp${i}`,
     name,
@@ -165,7 +170,7 @@ export function generateField(
   return generateFieldMulti(
     [{ ownerId: "solo", name: teamName, strength: userStrength, luck }],
     fieldSeed,
-    AI_MEAN,
+    SOLO_AI_MEAN,
   ).map((t) => (t.ownerId === "solo" ? { ...t, id: "user", isUser: true } : t));
 }
 

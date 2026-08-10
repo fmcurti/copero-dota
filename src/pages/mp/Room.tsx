@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Broadcast } from "../../components/Broadcast";
 import { DraftRecap } from "../../components/DraftRecap";
+import { HumanTeamBadge } from "../../components/HumanTeamBadge";
 import { OptionCard, Section } from "../../components/options";
 import { ovrColor } from "../../components/cards";
 import { Stinger } from "../../components/Stinger";
@@ -199,7 +200,7 @@ function MySeatPlate({
       setValue(seat.name);
       return;
     }
-    // Show what the server will actually store, so a stripped "(you)" is visible.
+    // Show what the server will actually store when a reserved self marker is stripped.
     setValue(name);
     // The server rejects duplicates too; checking here just saves the round
     // trip and puts the complaint next to the field it is about.
@@ -235,7 +236,7 @@ function MySeatPlate({
           Host
         </span>
       )}
-      <span className="text-[10px] uppercase tracking-wide text-slate-dim">✎ you</span>
+      <HumanTeamBadge self />
     </div>
   );
 }
@@ -507,6 +508,7 @@ function AssembledView({
   heroById: Map<number, Hero>;
 }) {
   const { seats, strengths, field } = snapshot;
+  const myPlayerId = mySeat >= 0 ? seats[mySeat].playerId : null;
   const myBoard = mySeat >= 0 ? snapshot.draft?.boards[mySeat] : null;
   const myAssignment = mySeat >= 0 ? snapshot.heroAssignments?.[mySeat] : null;
   const myStrength = mySeat >= 0 ? strengths?.[mySeat] : null;
@@ -604,7 +606,10 @@ function AssembledView({
                     t.ownerId != null ? "font-bold text-bone" : "text-slate-mid"
                   }`}
                 >
-                  <span>{t.name}</span>
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    {t.ownerId != null && <HumanTeamBadge self={t.ownerId === myPlayerId} />}
+                    <span className="truncate">{t.name}</span>
+                  </span>
                   <span className="font-mono text-xs">{t.strength}</span>
                 </div>
               ))}
@@ -751,10 +756,10 @@ function BroadcastView({
                       >
                         {expanded ? "▾" : "▸"}
                       </span>
-                      <span className="min-w-0 flex-1 truncate">
+                      <span className="flex min-w-0 flex-1 items-center gap-1.5">
                         {i === 0 ? "🏆 " : ""}
-                        {seat.name}
-                        {seat.playerId === playerId ? " (you)" : ""}
+                        {seat.playerId === playerId && <HumanTeamBadge self />}
+                        <span className="truncate">{seat.name}</span>
                       </span>
                       <span className="shrink-0 font-mono text-xs">
                         {stats.label} · {stats.gamesWon}–{stats.gamesLost}

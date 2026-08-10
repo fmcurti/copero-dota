@@ -66,9 +66,10 @@ dramatic sim decides the Copero.
 
 ### Tournament
 - Field = N human teams + (18−N) AI teams.
-- **AI strength scales to the lobby**: mean = avg(human team OVR) − 4, sd 5,
-  clamped [76, 99] (retuned from +1 after playtesting: at −4, simulated
-  bracket head-to-heads double while bots still win ~85% of Coperos). The
+- **AI strength scales to the lobby**: mean = min(avg(human team OVR) − 4,
+  88), sd 5, clamped [76, 99]. The 88 ceiling is solo's fixed 86 mean +2, so
+  exceptional drafts do not also make every bot exceptional. At −4, simulated
+  bracket head-to-heads double while bots still win ~85% of Coperos. The
   contest is human-vs-human; bots are credible spoilers.
 - **Natural seeding** exactly like solo (snake by strength into two groups of
   9) — humans land wherever their draft puts them.

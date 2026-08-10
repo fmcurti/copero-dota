@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { buildBeats } from "../game/beats";
 import type { BracketMatch, GroupStanding, SimResult, SimTeam } from "../game/types";
+import { HumanTeamBadge } from "./HumanTeamBadge";
 
 // ---------------------------------------------------------------------------
 // Broadcast reveal — the sim plays out as a sequence of timed beats:
@@ -158,8 +159,15 @@ function GroupBoard({
                         : "text-slate-strong"
                 }`}
               >
-                {h === "self" && <span className="absolute inset-y-1 left-0 w-0.5 rounded bg-trophy" />}
+                {h && (
+                  <span
+                    className={`absolute inset-y-1 left-0 w-0.5 rounded ${
+                      h === "self" ? "bg-trophy" : "bg-radiant"
+                    }`}
+                  />
+                )}
                 <span className="w-5 shrink-0 font-mono text-xs text-slate-dim">{p + 1}</span>
+                {h && <HumanTeamBadge self={h === "self"} />}
                 <span className="min-w-0 flex-1 truncate">{s.team.name}</span>
                 {live && today.length > 0 && (
                   <span key={`dots-${upTo}`} className="flex shrink-0 items-center gap-1">
@@ -267,7 +275,10 @@ function TeamLine({
         decided && winner ? "font-bold" : ""
       } ${color}`}
     >
-      <span className="truncate">{name}</span>
+      <span className="flex min-w-0 items-center gap-1">
+        {hl && <HumanTeamBadge self={hl === "self"} />}
+        <span className="truncate">{name}</span>
+      </span>
       <span className={`font-mono font-bold ${scoreColor}`}>{score ?? "·"}</span>
     </div>
   );
@@ -537,8 +548,9 @@ function ClashPlate({
         >
           {team.name}
         </div>
-        <div className="font-mono text-[10px] text-slate-dim">
-          {team.ownerId != null ? "drafter" : `str ${team.strength}`}
+        <div className="mt-0.5 flex items-center gap-1 font-mono text-[10px] text-slate-dim">
+          {team.ownerId != null && <HumanTeamBadge self={hl === "self"} />}
+          <span>{team.ownerId != null ? "drafter" : `str ${team.strength}`}</span>
         </div>
       </div>
     </div>
@@ -645,6 +657,7 @@ function ChampionPlate({
   result,
   teamName,
   mine,
+  perspectiveOwnerId,
 }: {
   result: SimResult;
   teamName: string;
@@ -655,6 +668,7 @@ function ChampionPlate({
     gamesWon: number;
     gamesLost: number;
   } | null;
+  perspectiveOwnerId: string | null;
 }) {
   const humanChampion = result.champion.ownerId != null;
   return (
@@ -685,6 +699,14 @@ function ChampionPlate({
             {result.champion.name}
           </span>
         </div>
+        {humanChampion && (
+          <div
+            className="anim-title-in mt-2 flex justify-center"
+            style={{ animationDelay: "0.25s" }}
+          >
+            <HumanTeamBadge self={result.champion.ownerId === perspectiveOwnerId} />
+          </div>
+        )}
         <div className="anim-title-in mt-2 text-xs tracking-[0.25em] text-slate-mid" style={{ animationDelay: "0.35s" }}>
           ALZA EL AEGIS
         </div>
@@ -940,7 +962,12 @@ export function Broadcast({
       {/* champion ceremony + final standings */}
       {done && (
         <div className="beat-in space-y-5">
-          <ChampionPlate result={result} teamName={teamName} mine={mine} />
+          <ChampionPlate
+            result={result}
+            teamName={teamName}
+            mine={mine}
+            perspectiveOwnerId={persp}
+          />
           <div className="panel rounded-xl p-3">
             <div className="plate mb-2 text-sm tracking-widest text-slate-dim">
               Final Standings
@@ -964,6 +991,8 @@ export function Broadcast({
                         {s.label}
                       </span>
                       {s.place === 1 && "🏆 "}
+                      {h && <HumanTeamBadge self={h === "self"} />}
+                      {h && " "}
                       {s.team.name}
                     </span>
                     <span className="font-mono text-xs text-slate-dim">{s.team.strength}</span>

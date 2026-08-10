@@ -54,7 +54,8 @@ Solo behavior must be pixel-identical after this phase.
 2. **`src/game/sim.ts`** — replace the single user-tally block with a loop over all
    owned teams filling `ownerStats`; keep the existing `user*` fields derived from it.
 3. **`src/game/field.ts`** — new `generateFieldMulti(humans[], fieldSeed)`:
-   `18 − N` AI teams, mean = `avg(human strength) + 1`, sd 5, clamp [76, 99].
+   `18 − N` AI teams, mean = `min(avg(human strength) − 4, 88)`, sd 5,
+   clamp [76, 99]. Solo remains pinned to a mean of 86.
    Existing `generateField` becomes a wrapper with AI mean pinned at 86 (solo unchanged).
 4. **New `src/game/beats.ts`** — move `Beat`, `ROUND_SCHEDULE`, `buildBeats` out of
    `Broadcast.tsx` (server needs them, React-free). Generalize: game ticks for any
