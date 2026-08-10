@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { buildBeats, pickTaunt, revealAt, seriesSeed } from "../game/beats";
+import { buildBeats, pickTaunt, revealAt, seriesSeed, type Beat } from "../game/beats";
 import { standingsAfter } from "../game/sim";
 import type { BracketMatch, SimResult, SimTeam } from "../game/types";
 import { HumanTeamBadge } from "./HumanTeamBadge";
@@ -11,8 +11,8 @@ import { HumanTeamBadge } from "./HumanTeamBadge";
 //   decided; human series get a VS clash strip and tick game by game)
 //   → champion ceremony.
 // Solo: auto-advances locally with pause and skip.
-// Versus: the room server drives the same renderer via `controlled`; the
-//   host's pause/skip go back through `onControl`.
+// Versus: the room server drives the same renderer through the room playback
+//   adapter; the host's pause/skip go back through its control callback.
 // ---------------------------------------------------------------------------
 
 type Highlight = "self" | "human" | null;
@@ -723,24 +723,68 @@ function ChampionPlate({
 
 // ---- the broadcast --------------------------------------------------------
 
+type BroadcastPlayback =
+  | { kind: "local" }
+  | {
+      kind: "room";
+      beat: { idx: number; playing: boolean; count?: number };
+      onControl?: (action: "pause" | "resume" | "skip") => void;
+    };
+
+const LOCAL_PLAYBACK = { kind: "local" } as const satisfies BroadcastPlayback;
+
+/** Normalize the local timer and server-driven room into one renderer input. */
+function useBroadcastPlayback(beats: Beat[], playback: BroadcastPlayback) {
+  const [localIdx, setLocalIdx] = useState(0);
+  const [localPlaying, setLocalPlaying] = useState(true);
+  const room = playback.kind === "room" ? playback : null;
+  const idx = room ? Math.min(room.beat.idx, beats.length - 1) : localIdx;
+  const playing = room ? room.beat.playing : localPlaying;
+
+  useEffect(() => {
+    if (room?.beat.count != null && room.beat.count !== beats.length) {
+      console.warn(
+        `broadcast desync: server has ${room.beat.count} beats, client built ${beats.length}`,
+      );
+    }
+  }, [room?.beat.count, beats.length]);
+
+  useEffect(() => {
+    if (room || !playing || idx >= beats.length - 1) return;
+    const t = setTimeout(() => setLocalIdx((i) => i + 1), beats[idx].ms);
+    return () => clearTimeout(t);
+  }, [room, playing, idx, beats]);
+
+  return {
+    idx,
+    playing,
+    canControl: room ? room.onControl != null : true,
+    toggle() {
+      if (room) room.onControl?.(playing ? "pause" : "resume");
+      else setLocalPlaying((value) => !value);
+    },
+    skip() {
+      if (room) room.onControl?.("skip");
+      else {
+        setLocalIdx(beats.length - 1);
+        setLocalPlaying(false);
+      }
+    },
+  };
+}
+
 export function Broadcast({
   result,
-  teamName,
   footer,
-  controlled,
-  onControl,
+  playback = LOCAL_PLAYBACK,
   perspectiveOwnerId,
   serverTaunt,
   localTauntPhrases,
 }: {
   result: SimResult;
-  teamName: string;
   footer?: React.ReactNode;
-  /** Versus mode: the server drives the reveal; disables the local timer.
-   *  `count` is the server's beat total — a desync tripwire (see below). */
-  controlled?: { idx: number; playing: boolean; count?: number };
-  /** Versus mode, host only: pause/resume/skip go to the server. */
-  onControl?: (action: "pause" | "resume" | "skip") => void;
+  /** Omit for the local timer; rooms provide the server-driven adapter. */
+  playback?: BroadcastPlayback;
   /** Whose dots perspective and champion-plate line (defaults to the isUser team). */
   perspectiveOwnerId?: string;
   /**
@@ -755,34 +799,14 @@ export function Broadcast({
   localTauntPhrases?: string[];
 }) {
   const beats = useMemo(() => buildBeats(result), [result]);
-  const [localIdx, setLocalIdx] = useState(0);
-  const [localPlaying, setLocalPlaying] = useState(true);
-  const idx = controlled ? Math.min(controlled.idx, beats.length - 1) : localIdx;
-  const playing = controlled ? controlled.playing : localPlaying;
+  const clock = useBroadcastPlayback(beats, playback);
+  const { idx, playing } = clock;
   const endRef = useRef<HTMLDivElement>(null);
-
-  // The server paces beat indices into a schedule this client rebuilt locally.
-  // Both derive it from the same (field, simSeed) — if the lengths ever differ
-  // (e.g. DEV_TAUNT_ALL compiled differently on the two sides), every client
-  // would silently render a different moment. Trip loudly instead.
-  useEffect(() => {
-    if (controlled?.count != null && controlled.count !== beats.length) {
-      console.warn(
-        `broadcast desync: server has ${controlled.count} beats, client built ${beats.length}`,
-      );
-    }
-  }, [controlled?.count, beats.length]);
 
   // What this beat puts on screen — the reveal state machine lives in beats.ts.
   const reveal = revealAt(result, beats, idx);
   const { cur, done, days, groupUpTo, groupPhase, roundsShown, humanGames, clash, phaseLabel } =
     reveal;
-
-  useEffect(() => {
-    if (controlled || !playing || done) return;
-    const t = setTimeout(() => setLocalIdx((i) => i + 1), beats[idx].ms);
-    return () => clearTimeout(t);
-  }, [controlled, playing, done, idx, beats]);
 
   // Scroll only when a new section lands (never during the group ticker).
   useEffect(() => {
@@ -805,6 +829,10 @@ export function Broadcast({
   const hl = (t: SimTeam): Highlight =>
     t.ownerId == null ? null : t.ownerId === persp ? "self" : "human";
   const mine = persp != null ? (result.ownerStats[persp] ?? null) : null;
+  const perspectiveTeam =
+    (persp != null
+      ? result.groupAssign.find((g) => g.team.ownerId === persp)?.team
+      : undefined) ?? result.groupAssign.find((g) => g.team.isUser)?.team;
 
   const clashMatch = clash ? result.rounds[clash.roundIdx]?.matches[clash.matchIdx] : null;
 
@@ -820,7 +848,7 @@ export function Broadcast({
     }
   }
 
-  const showControls = !done && (controlled ? onControl != null : true);
+  const showControls = !done && clock.canControl;
 
   return (
     <div className="space-y-5">
@@ -836,24 +864,13 @@ export function Broadcast({
         {showControls && (
           <div className="flex shrink-0 gap-2">
             <button
-              onClick={() =>
-                controlled
-                  ? onControl?.(playing ? "pause" : "resume")
-                  : setLocalPlaying((p) => !p)
-              }
+              onClick={clock.toggle}
               className="rounded border border-ink-600 px-3 py-1 text-xs text-slate-strong transition hover:border-slate-mid hover:text-bone"
             >
               {playing ? "Pause" : "Resume"}
             </button>
             <button
-              onClick={() => {
-                if (controlled) {
-                  onControl?.("skip");
-                } else {
-                  setLocalIdx(beats.length - 1);
-                  setLocalPlaying(false);
-                }
-              }}
+              onClick={clock.skip}
               className="rounded border border-ink-600 px-3 py-1 text-xs text-slate-strong transition hover:border-slate-mid hover:text-bone"
             >
               Skip to result
@@ -924,7 +941,7 @@ export function Broadcast({
         <div className="beat-in space-y-5">
           <ChampionPlate
             result={result}
-            teamName={teamName}
+            teamName={perspectiveTeam?.name ?? "Your Team"}
             mine={mine}
             perspectiveOwnerId={persp}
           />

@@ -60,9 +60,10 @@ Solo behavior must be pixel-identical after this phase.
 4. **New `src/game/beats.ts`** — move `Beat`, `ROUND_SCHEDULE`, `buildBeats` out of
    `Broadcast.tsx` (server needs them, React-free). Generalize: game ticks for any
    match with an owned team; group order = fewer-humans group first (solo semantics kept).
-5. **`src/components/Broadcast.tsx`** — new optional props:
-   `controlled?: { idx, playing }` (disables the internal timer; server drives),
-   `onControl?: (pause|resume|skip) => void` (host-only buttons),
+5. **`src/components/Broadcast.tsx`** — one playback interface:
+   omit `playback` for the local timer, or pass
+   `{ kind: "room", beat: { idx, playing, count? }, onControl? }` for the
+   server-driven adapter and host-only controls.
    `perspectiveOwnerId?: string` (whose ●○ dots). Human-team highlighting keys off
    `ownerId != null`; your team keeps the strong treatment. Human-vs-human dots render
    from the perspective team if present, else relative to team A. Solo call site unchanged.
@@ -176,7 +177,7 @@ Never denies, never mulligans.
 - Cleanup: `done` + all disconnected → `ctx.storage.deleteAll()` on a +1h alarm.
 
 Clients never receive `SimResult` — they recompute `simulateTournament(field, simSeed)`
-locally (deterministic) and render `Broadcast controlled={beat}`.
+locally (deterministic) and render `Broadcast` with the room playback adapter.
 
 ### Infra wiring (verified)
 - Packages: `partyserver@0.5.x`, `partysocket@1.3.x`, dev `@cloudflare/vite-plugin@1.51.x`.
@@ -217,8 +218,8 @@ locally (deterministic) and render `Broadcast controlled={beat}`.
     countdown from `turnDeadline`; right rail = all boards (`MiniBoard` compact
     variant of `RosterBoard`) + denied shelf.
   - **assembled**: all boards + strength tiles, field list, host-only Play.
-  - **broadcasting/done**: `Broadcast controlled={beat}` with
-    `perspectiveOwnerId = myPlayerId`, `onControl` for host; done-footer = lobby
+  - **broadcasting/done**: `Broadcast playback={{ kind: "room", beat, onControl }}`
+    with `perspectiveOwnerId = myPlayerId` and controls only for the host; done-footer = lobby
     winner plate + per-human standings + Rematch (fresh code).
 - Nav gains a "Versus" link. Optional: on `done`, record your own `RunRecord`
   locally with a "vs N humans" marker.

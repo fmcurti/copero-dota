@@ -1,7 +1,6 @@
 import { heroFitBonus } from "../game/strength";
 import type { PlayerHeroStats } from "../game/types";
-import { boardRoster, legalPicks, type EngineState } from "./engine";
-import type { Action } from "./protocol";
+import { boardRoster, legalPicks, type Action, type EngineState } from "./engine";
 
 // ---------------------------------------------------------------------------
 // Timeout fallback: a decent, fully deterministic pick so an AFK friend ends

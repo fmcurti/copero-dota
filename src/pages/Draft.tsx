@@ -207,7 +207,6 @@ export default function Draft() {
       <Broadcast
         key={result.seed}
         result={result}
-        teamName={teamName || "Your Team"}
         localTauntPhrases={devPhrases}
         footer={
           <div className="space-y-4">

@@ -13,8 +13,8 @@ import { listingKey, TOUCH_MS, type DirectoryEntry } from "../src/mp/directory";
 import {
   DEFAULT_NAME,
   MAX_SEATS,
+  parseClientMsg,
   sanitizeName,
-  type ClientMsg,
   type ServerMsg,
 } from "../src/mp/protocol";
 import {
@@ -127,8 +127,10 @@ export class CoperoRoom extends Server<Env> {
     this.broadcast(JSON.stringify({ t: "snapshot", room: snapshot } satisfies ServerMsg));
   }
 
-  private sendError(conn: Connection, code: string, msg: string) {
-    conn.send(JSON.stringify({ t: "error", code, msg } satisfies ServerMsg));
+  private sendError(conn: Connection, code: string, msg: string, fatal = false) {
+    conn.send(
+      JSON.stringify({ t: "error", code, msg, ...(fatal ? { fatal: true } : {}) } satisfies ServerMsg),
+    );
   }
 
   /** Load the data bundle + card pool (config is frozen once the draft starts). */
@@ -164,7 +166,7 @@ export class CoperoRoom extends Server<Env> {
     const name = sanitizeName(url.searchParams.get("name") ?? "") || DEFAULT_NAME;
     const prefersSpectator = url.searchParams.get("spectator") === "1";
     if (!playerId) {
-      this.sendError(conn, "no-player-id", "Missing playerId.");
+      this.sendError(conn, "no-player-id", "Missing playerId.", true);
       conn.close(4000, "no playerId");
       return;
     }
@@ -284,14 +286,16 @@ export class CoperoRoom extends Server<Env> {
   // ---- messages ----
 
   async onMessage(conn: Connection, raw: string | ArrayBuffer) {
-    let msg: ClientMsg;
+    let decoded: unknown;
     try {
-      msg = JSON.parse(typeof raw === "string" ? raw : new TextDecoder().decode(raw));
+      decoded = JSON.parse(typeof raw === "string" ? raw : new TextDecoder().decode(raw));
     } catch {
       return this.sendError(conn, "bad-json", "Could not parse message.");
     }
+    const msg = parseClientMsg(decoded);
+    if (!msg) return this.sendError(conn, "bad-message", "Unsupported or malformed message.");
     const st = conn.state as ConnState;
-    if (!st?.playerId) return this.sendError(conn, "no-player-id", "Missing playerId.");
+    if (!st?.playerId) return this.sendError(conn, "no-player-id", "Missing playerId.", true);
     try {
       await this.dispatch({ type: "message", playerId: st.playerId, connName: st.name, msg }, conn);
     } catch (e) {

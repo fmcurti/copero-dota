@@ -5,10 +5,10 @@ import { SLOT_IDS, type Slots } from "../../game/draft";
 import { eventShortName, heroImage } from "../../game/data";
 import { computeStrength, heroFitBonus } from "../../game/strength";
 import type { DataBundle, Hero, RosterPlayer, TeamStrength } from "../../game/types";
-import { legalActions, type EngineState } from "../../mp/engine";
+import { legalActions, type Board, type CardRef } from "../../mp/engine";
 import { NO_DRAFT_CUES, draftCues } from "../../mp/roomView";
 import { synergyHints } from "../../mp/synergy";
-import type { Board, CardRef, ClientMsg, DraftPublic, RoomSnapshot } from "../../mp/protocol";
+import type { ClientMsg, RoomSnapshot } from "../../mp/protocol";
 import { announce, preloadAnnouncer } from "./announcer";
 import { SoundControl } from "./SoundControl";
 import { TurnTimer } from "./TurnTimer";
@@ -18,26 +18,6 @@ function ordinal(n: number): string {
   const s = ["th", "st", "nd", "rd"];
   const v = n % 100;
   return `${n}${s[(v - 20) % 10] ?? s[v] ?? s[0]}`;
-}
-
-/** Rebuild just enough EngineState for client-side legality display. */
-function pseudoEngine(d: DraftPublic, numSeats: number): EngineState {
-  return {
-    numSeats,
-    packSeq: d.packSeq,
-    roundSeq: d.roundSeq,
-    openerSeat: d.openerSeat,
-    turnSeat: d.turnSeat,
-    currentPacks: d.currentPacks,
-    actedSeats: [],
-    boards: d.boards,
-    takenSteamIds: d.takenSteamIds,
-    deniedShelf: d.deniedShelf,
-    mulligansLeft: d.mulligansLeft,
-    deniesLeft: d.deniesLeft,
-    usedPackIds: [],
-    done: false,
-  };
 }
 
 function sameCard(a: CardRef, b: CardRef): boolean {
@@ -257,13 +237,12 @@ export function DraftView({
 }) {
   const d = snapshot.draft!;
   const seats = snapshot.seats;
-  const eng = useMemo(() => pseudoEngine(d, seats.length), [d, seats.length]);
   const legal = useMemo(
     () =>
       mySeat >= 0
-        ? legalActions(eng, mySeat)
+        ? legalActions(d, mySeat)
         : { picks: [], canDeny: false, canPass: false, canMulligan: false },
-    [eng, mySeat],
+    [d, mySeat],
   );
   const myTurn = mySeat >= 0 && d.turnSeat === mySeat;
   const [denyArmed, setDenyArmed] = useState(false);
@@ -311,10 +290,10 @@ export function DraftView({
 
   const act = (card: CardRef) => {
     if (denyArmed) {
-      send({ t: "deny", card });
+      send({ t: "draft", action: { type: "deny", card } });
       setDenyArmed(false);
     } else {
-      send({ t: "pick", card });
+      send({ t: "draft", action: { type: "pick", card } });
     }
   };
 
@@ -430,7 +409,7 @@ export function DraftView({
             )}
             {legal.canPass && (
               <button
-                onClick={() => send({ t: "pass" })}
+                onClick={() => send({ t: "draft", action: { type: "pass" } })}
                 className="rounded-lg border border-ink-600 px-4 py-2 text-sm font-semibold text-slate-strong hover:border-slate-mid hover:text-bone"
               >
                 Pass (nothing fits)
@@ -438,7 +417,7 @@ export function DraftView({
             )}
             {legal.canMulligan && (
               <button
-                onClick={() => send({ t: "mulligan" })}
+                onClick={() => send({ t: "draft", action: { type: "mulligan" } })}
                 className="rounded-lg border border-ink-600 px-4 py-2 text-sm font-semibold text-slate-strong hover:border-slate-mid hover:text-bone"
                 title="Burn this pack before anyone picks — everyone drafts from a replacement."
               >

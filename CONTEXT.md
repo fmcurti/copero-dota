@@ -37,7 +37,9 @@ tests, and reviews all say the same thing.
   every change (`RoomSnapshot` in `src/mp/protocol.ts`). One type serves all
   seats; nothing per-seat is ever hidden in it.
 - **Draft engine** — the pure reducer for *within-spread* rules
-  (`src/mp/engine.ts`): turn order, legality, deny/mulligan semantics.
+  (`src/mp/engine.ts`): turn order, legality, deny/mulligan semantics, and the
+  shared draft-action vocabulary. Its legality interface accepts the public
+  projection directly; clients never reconstruct private engine state.
 - **Room reducer** — the pure state machine for *everything else the room
   does* (`src/mp/room.ts`): seating and kicks, the spread cascade, timeouts
   and autopicks, assembly, the beat ticker, cleanup.
@@ -47,7 +49,8 @@ tests, and reviews all say the same thing.
   partyserver adapter (`worker/index.ts`) in production, the plain test
   harness in `src/mp/room.test.ts`. The host owns sockets, storage, the data
   bundle, the directory, and the one alarm slot; `nextAlarm(state)` tells it
-  what that slot should hold.
+  what that slot should hold. Untrusted socket payloads cross
+  `parseClientMsg` before the host hands them to the reducer.
 - **Room view** — what a snapshot means to one player, and what should
   happen when the client's facts change (`src/mp/roomView.ts`).
   `deriveRoomView(snapshot, playerId, result?) → RoomView` answers the

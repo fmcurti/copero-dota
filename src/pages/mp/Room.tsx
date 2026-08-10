@@ -44,7 +44,7 @@ export default function Room() {
     if (searchParams.get("spectator") === "1") watchOnly(code);
   });
   const teamName = useRunStore((s) => s.teamName);
-  const { playerId, snapshot, send, spectate, takeSeat, lastError, locked, opens } = useRoom(
+  const { playerId, snapshot, send, spectate, takeSeat, lastError, fatalError, opens } = useRoom(
     code,
     teamName || "Your Team",
   );
@@ -89,12 +89,12 @@ export default function Room() {
     }
   }, [snapshot, result, playerId, code, opens, phrasesKey, send, recordRun]);
 
-  if (locked) {
+  if (fatalError) {
     return (
       <div className="mx-auto max-w-md text-center">
         <div className="plate-rules py-6">
           <div className="plate text-2xl font-bold text-bone">Room {code}</div>
-          <p className="mt-2 text-sm text-slate-mid">{locked}</p>
+          <p className="mt-2 text-sm text-slate-mid">{fatalError}</p>
         </div>
         <Link
           to="/"
@@ -682,11 +682,13 @@ function BroadcastView({
     <Broadcast
       key={result.seed}
       result={result}
-      teamName={view.myName}
       perspectiveOwnerId={playerId}
       serverTaunt={snapshot.taunt}
-      controlled={{ idx: beat.idx, playing: beat.playing, count: beat.count }}
-      onControl={isHost ? (action) => send({ t: "beat", action }) : undefined}
+      playback={{
+        kind: "room",
+        beat,
+        onControl: isHost ? (action) => send({ t: "beat", action }) : undefined,
+      }}
       footer={
         <div className="space-y-4">
           <div className="rounded-xl border border-ink-700 bg-ink-900/40 p-4">

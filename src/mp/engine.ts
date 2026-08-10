@@ -8,10 +8,10 @@ import {
   packPickable,
   slotForRole,
   type DrawnPack,
+  type Slots,
 } from "../game/draft";
 import type { Rng } from "../game/rng";
-import type { Pack } from "../game/types";
-import { DENIES_PER_GAME, type Action, type Board, type CardRef, type DeniedCard } from "./protocol";
+import type { Pack, RosterPlayer } from "../game/types";
 
 // ---------------------------------------------------------------------------
 // The versus draft engine — a pure reducer over plain-JSON state. The room
@@ -31,6 +31,27 @@ import { DENIES_PER_GAME, type Action, type Board, type CardRef, type DeniedCard
 //   shared — only the card in this pack is consumed. A denied player is
 //   destroyed for everyone; a denied hero only leaves this pack.
 // ---------------------------------------------------------------------------
+
+export const DENIES_PER_GAME = 1;
+
+export type CardRef =
+  | { kind: "player"; steamId: number }
+  | { kind: "hero"; heroId: number };
+
+export type DeniedCard =
+  | { kind: "player"; player: RosterPlayer }
+  | { kind: "hero"; heroId: number };
+
+export type Action =
+  | { type: "pick"; card: CardRef }
+  | { type: "deny"; card: CardRef }
+  | { type: "pass" }
+  | { type: "mulligan" };
+
+export interface Board {
+  slots: Slots;
+  heroes: number[];
+}
 
 export interface EngineState {
   numSeats: number;
@@ -52,6 +73,22 @@ export interface EngineState {
   usedPackIds: string[];
   done: boolean;
 }
+
+/**
+ * The public facts needed to answer "what may this seat do?". Both the full
+ * engine state and the wire projection satisfy this interface; callers never
+ * need to fabricate the engine's private bookkeeping fields.
+ */
+export type DraftLegalityState = Pick<
+  EngineState,
+  | "openerSeat"
+  | "turnSeat"
+  | "currentPacks"
+  | "boards"
+  | "takenSteamIds"
+  | "mulligansLeft"
+  | "deniesLeft"
+>;
 
 export function createDraft(
   numSeats: number,
@@ -76,7 +113,7 @@ export function createDraft(
   };
 }
 
-const takenSet = (s: EngineState) => new Set(s.takenSteamIds);
+const takenSet = (s: Pick<EngineState, "takenSteamIds">) => new Set(s.takenSteamIds);
 
 export function boardComplete(b: Board): boolean {
   return isComplete(b.slots, b.heroes);
@@ -91,13 +128,13 @@ export function packsPerSpread(numSeats: number): number {
   return numSeats > 4 ? 2 : 1;
 }
 
-function packHasCards(s: EngineState): boolean {
+function packHasCards(s: DraftLegalityState): boolean {
   return s.currentPacks.some((p) => p.players.length + p.heroes.length > 0);
 }
 
 /** Legal picks for a seat across the whole spread (off-turn callers get the same answer). */
-export function legalPicks(s: EngineState, seat: number): CardRef[] {
-  if (!s.currentPacks.length || s.done) return [];
+export function legalPicks(s: DraftLegalityState, seat: number): CardRef[] {
+  if (!s.currentPacks.length) return [];
   const b = s.boards[seat];
   if (boardComplete(b)) return [];
   const taken = takenSet(s);
@@ -234,10 +271,10 @@ export function openSpread(s: EngineState, pool: Pack[], rng: Rng): EngineState 
 }
 
 export function legalActions(
-  s: EngineState,
+  s: DraftLegalityState,
   seat: number,
 ): { picks: CardRef[]; canDeny: boolean; canPass: boolean; canMulligan: boolean } {
-  const myTurn = !s.done && s.turnSeat === seat && s.currentPacks.length > 0;
+  const myTurn = s.turnSeat === seat && s.currentPacks.length > 0;
   const picks = myTurn ? legalPicks(s, seat) : [];
   return {
     picks,
@@ -245,7 +282,6 @@ export function legalActions(
     canPass: myTurn && picks.length === 0,
     // "Before anyone acts" is guaranteed by turnSeat === openerSeat: the opener always acts first.
     canMulligan:
-      !s.done &&
       s.currentPacks.length > 0 &&
       seat === s.openerSeat &&
       s.turnSeat === s.openerSeat &&

@@ -1,12 +1,5 @@
-import type { DrawnPack, Slots } from "../game/draft";
-import type {
-  CardMode,
-  GameFormat,
-  HeroAlloc,
-  RosterPlayer,
-  SimTeam,
-  TeamStrength,
-} from "../game/types";
+import type { CardMode, GameFormat, HeroAlloc, SimTeam, TeamStrength } from "../game/types";
+import type { Action, CardRef, EngineState } from "./engine";
 
 // ---------------------------------------------------------------------------
 // Versus wire contract. Everything in this game is public information (open
@@ -43,7 +36,6 @@ export const DEFAULT_MP_CONFIG: MpConfig = {
 
 export const MIN_SEATS = 2;
 export const MAX_SEATS = 8;
-export const DENIES_PER_GAME = 1;
 
 export const MAX_WIN_PHRASES = 8;
 export const MAX_WIN_PHRASE_LEN = 120;
@@ -65,40 +57,22 @@ export interface Seat {
   isHost: boolean;
 }
 
-export type CardRef = { kind: "player"; steamId: number } | { kind: "hero"; heroId: number };
-
-export type DeniedCard =
-  | { kind: "player"; player: RosterPlayer }
-  | { kind: "hero"; heroId: number };
-
-/** A seat's draft action, as consumed by the engine reducer. */
-export type Action =
-  | { type: "pick"; card: CardRef }
-  | { type: "deny"; card: CardRef }
-  | { type: "pass" }
-  | { type: "mulligan" };
-
-export interface Board {
-  slots: Slots;
-  heroes: number[];
-}
-
-export interface DraftPublic {
-  packSeq: number;
-  /** Spread number — what the UI shows as the round. */
-  roundSeq: number;
-  openerSeat: number;
-  turnSeat: number | null;
+export type DraftPublic = Pick<
+  EngineState,
+  | "packSeq"
+  | "roundSeq"
+  | "openerSeat"
+  | "turnSeat"
+  | "currentPacks"
+  | "boards"
+  | "takenSteamIds"
+  | "deniedShelf"
+  | "mulligansLeft"
+  | "deniesLeft"
+> & {
   /** Epoch ms the current turn autopicks, or null (timer off / no turn). */
   turnDeadline: number | null;
-  /** The open spread (1 pack, 2 for 5+ seats); taken/denied cards removed. */
-  currentPacks: DrawnPack[];
-  boards: Board[]; // parallel to seats
-  takenSteamIds: number[];
-  deniedShelf: { card: DeniedCard; bySeat: number; packSeq: number }[];
-  mulligansLeft: number[];
-  deniesLeft: number[];
-}
+};
 
 export interface RoomSnapshot {
   phase: Phase;
@@ -129,17 +103,114 @@ export type ClientMsg =
   | { t: "takeSeat" } // claim an open seat, lobby only
   | { t: "kick"; playerId: string } // host, lobby only — unseats, no ban
   | { t: "start" } // host, needs MIN_SEATS+
-  | { t: "pick"; card: CardRef }
-  | { t: "deny"; card: CardRef }
-  | { t: "pass" }
-  | { t: "mulligan" }
+  | { t: "draft"; action: Action }
   | { t: "assignHero"; steamId: number; heroId: number } // own board, assembled/manual only
   | { t: "play" } // host, assembled → broadcasting
   | { t: "beat"; action: "pause" | "resume" | "skip" }; // host
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const isId = (value: unknown): value is number =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+
+function parseCardRef(value: unknown): CardRef | null {
+  if (!isRecord(value)) return null;
+  if (value.kind === "player" && isId(value.steamId)) {
+    return { kind: "player", steamId: value.steamId };
+  }
+  if (value.kind === "hero" && isId(value.heroId)) {
+    return { kind: "hero", heroId: value.heroId };
+  }
+  return null;
+}
+
+function parseAction(value: unknown): Action | null {
+  if (!isRecord(value)) return null;
+  if (value.type === "pass" || value.type === "mulligan") return { type: value.type };
+  if (value.type !== "pick" && value.type !== "deny") return null;
+  const card = parseCardRef(value.card);
+  return card ? { type: value.type, card } : null;
+}
+
+function parseConfig(value: unknown): Partial<MpConfig> | null {
+  if (!isRecord(value)) return null;
+  const config: Partial<MpConfig> = {};
+  if (value.format !== undefined) {
+    if (value.format !== "standard" && value.format !== "valve_legacy") return null;
+    config.format = value.format;
+  }
+  if (value.cardMode !== undefined) {
+    if (value.cardMode !== "career" && value.cardMode !== "peak" && value.cardMode !== "event")
+      return null;
+    config.cardMode = value.cardMode;
+  }
+  if (value.heroAlloc !== undefined) {
+    if (value.heroAlloc !== "auto" && value.heroAlloc !== "manual") return null;
+    config.heroAlloc = value.heroAlloc;
+  }
+  if (value.timerSecs !== undefined) {
+    if (value.timerSecs !== 7 && value.timerSecs !== 15 && value.timerSecs !== 25 && value.timerSecs !== null)
+      return null;
+    config.timerSecs = value.timerSecs;
+  }
+  if (value.mulligans !== undefined) {
+    if (value.mulligans !== 0 && value.mulligans !== 1 && value.mulligans !== 2) return null;
+    config.mulligans = value.mulligans;
+  }
+  if (value.visibility !== undefined) {
+    if (
+      value.visibility !== "private" &&
+      value.visibility !== "spectatable" &&
+      value.visibility !== "public"
+    )
+      return null;
+    config.visibility = value.visibility;
+  }
+  return config;
+}
+
+/** Validate an untrusted decoded WebSocket payload at the protocol seam. */
+export function parseClientMsg(value: unknown): ClientMsg | null {
+  if (!isRecord(value) || typeof value.t !== "string") return null;
+  switch (value.t) {
+    case "configure": {
+      const config = parseConfig(value.config);
+      return config ? { t: "configure", config } : null;
+    }
+    case "rename":
+      return typeof value.name === "string" ? { t: "rename", name: value.name } : null;
+    case "phrases":
+      return Array.isArray(value.phrases) && value.phrases.every((p) => typeof p === "string")
+        ? { t: "phrases", phrases: value.phrases }
+        : null;
+    case "spectate":
+    case "takeSeat":
+    case "start":
+    case "play":
+      return { t: value.t };
+    case "kick":
+      return typeof value.playerId === "string" ? { t: "kick", playerId: value.playerId } : null;
+    case "draft": {
+      const action = parseAction(value.action);
+      return action ? { t: "draft", action } : null;
+    }
+    case "assignHero":
+      return isId(value.steamId) && isId(value.heroId)
+        ? { t: "assignHero", steamId: value.steamId, heroId: value.heroId }
+        : null;
+    case "beat":
+      return value.action === "pause" || value.action === "resume" || value.action === "skip"
+        ? { t: "beat", action: value.action }
+        : null;
+    default:
+      return null;
+  }
+}
+
 export type ServerMsg =
   | { t: "snapshot"; room: RoomSnapshot }
-  | { t: "error"; code: string; msg: string };
+  | { t: "error"; code: string; msg: string; fatal?: boolean };
 
 export const NAME_MAX = 30;
 export const DEFAULT_NAME = "Sin Nombre";

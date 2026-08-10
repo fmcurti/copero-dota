@@ -254,11 +254,11 @@ describe("start and the draft", () => {
     const mine = room.state.seats[turn].playerId;
     const pick = legalActions(e, turn).picks[0];
 
-    const bad = room.send(msg(other, { t: "pick", card: pick }));
+    const bad = room.send(msg(other, { t: "draft", action: { type: "pick", card: pick } }));
     expect(bad.reply?.code).toBe("not-your-turn");
     expect(bad.changed).toBe(false);
 
-    const ok = room.send(msg(mine, { t: "pick", card: pick }));
+    const ok = room.send(msg(mine, { t: "draft", action: { type: "pick", card: pick } }));
     expect(ok.changed).toBe(true);
     expect(room.state.engine!.actedSeats).toContain(turn);
   });
@@ -430,7 +430,12 @@ describe("presence, cleanup, and the alarm slot", () => {
   it("needsData: draft actions and drafting alarms, nothing else", () => {
     const r = freshRoom();
     expect(needsData(r, msg("A", { t: "start" }))).toBe(true);
-    expect(needsData(r, msg("A", { t: "pick", card: { kind: "hero", heroId: 1 } }))).toBe(true);
+    expect(
+      needsData(
+        r,
+        msg("A", { t: "draft", action: { type: "pick", card: { kind: "hero", heroId: 1 } } }),
+      ),
+    ).toBe(true);
     expect(needsData(r, msg("A", { t: "rename", name: "x" }))).toBe(false);
     expect(needsData(r, { type: "alarm" })).toBe(false);
     expect(needsData({ ...r, phase: "drafting" }, { type: "alarm" })).toBe(true);

@@ -27,7 +27,7 @@ export function useRoom(code: string, name: string) {
   const [playerId] = useState(getPlayerId);
   const [snapshot, setSnapshot] = useState<RoomSnapshot | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
-  const [locked, setLocked] = useState<string | null>(null);
+  const [fatalError, setFatalError] = useState<string | null>(null);
   // Freeze the name at mount so typing elsewhere never churns the socket.
   const nameRef = useRef(name);
   const query = useMemo(
@@ -46,7 +46,7 @@ export function useRoom(code: string, name: string) {
     onMessage(e) {
       const m = JSON.parse(e.data as string) as ServerMsg;
       if (m.t === "snapshot") setSnapshot(m.room);
-      else if (m.code === "room-locked" || m.code === "no-player-id") setLocked(m.msg);
+      else if (m.fatal) setFatalError(m.msg);
       else setLastError(m.msg);
     },
   });
@@ -75,7 +75,7 @@ export function useRoom(code: string, name: string) {
     localStorage.removeItem(spectatorKey(code));
     socket.send(JSON.stringify({ t: "takeSeat" } satisfies ClientMsg));
   }, [code, socket]);
-  return { playerId, snapshot, send, spectate, takeSeat, lastError, locked, opens };
+  return { playerId, snapshot, send, spectate, takeSeat, lastError, fatalError, opens };
 }
 
 /** Re-renders on an interval — for countdowns. */

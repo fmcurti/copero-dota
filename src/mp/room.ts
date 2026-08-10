@@ -129,10 +129,7 @@ export function needsData(state: RoomState, event: RoomEvent): boolean {
   if (event.type === "alarm") return state.phase === "drafting";
   if (event.type !== "message") return false;
   const t = event.msg?.t;
-  return (
-    t === "start" || t === "pick" || t === "deny" || t === "pass" || t === "mulligan" ||
-    t === "assignHero"
-  );
+  return t === "start" || t === "draft" || t === "assignHero";
 }
 
 /**
@@ -335,21 +332,10 @@ function onMessage(
       afterDraftStep(r, ctx);
       return { state: r, changed: true };
     }
-    case "pick":
-    case "deny":
-    case "pass":
-    case "mulligan": {
+    case "draft": {
       if (r.phase !== "drafting" || !r.engine)
         return err(r, "bad-phase", "No draft in progress.");
-      const action =
-        msg.t === "pick"
-          ? ({ type: "pick", card: msg.card } as const)
-          : msg.t === "deny"
-            ? ({ type: "deny", card: msg.card } as const)
-            : msg.t === "pass"
-              ? ({ type: "pass" } as const)
-              : ({ type: "mulligan" } as const);
-      const res = applyAction(r.engine, seat, action);
+      const res = applyAction(r.engine, seat, msg.action);
       if (res.error) return err(r, res.error, `Illegal action (${res.error}).`);
       r.engine = res.state;
       openUntilTurn(r, ctx);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { NAME_MAX, hasYouTag, sanitizeName } from "./protocol";
+import { NAME_MAX, hasYouTag, parseClientMsg, sanitizeName } from "./protocol";
 
 describe("team name sanitising", () => {
   it("leaves ordinary names alone", () => {
@@ -41,5 +41,57 @@ describe("team name sanitising", () => {
   it("is idempotent", () => {
     const once = sanitizeName("Chan (you) (you)");
     expect(sanitizeName(once)).toBe(once);
+  });
+});
+
+describe("client message parsing", () => {
+  it("accepts and normalizes every message family", () => {
+    expect(parseClientMsg({ t: "configure", config: { timerSecs: 25, visibility: "public", ignored: true } })).toEqual({
+      t: "configure",
+      config: { timerSecs: 25, visibility: "public" },
+    });
+    expect(parseClientMsg({ t: "rename", name: "Chan" })).toEqual({ t: "rename", name: "Chan" });
+    expect(parseClientMsg({ t: "phrases", phrases: ["gg", "ez"] })).toEqual({
+      t: "phrases",
+      phrases: ["gg", "ez"],
+    });
+    for (const t of ["spectate", "takeSeat", "start", "play"] as const) {
+      expect(parseClientMsg({ t })).toEqual({ t });
+    }
+    expect(parseClientMsg({ t: "kick", playerId: "p2" })).toEqual({ t: "kick", playerId: "p2" });
+    expect(
+      parseClientMsg({
+        t: "draft",
+        action: { type: "pick", card: { kind: "player", steamId: 123 } },
+      }),
+    ).toEqual({ t: "draft", action: { type: "pick", card: { kind: "player", steamId: 123 } } });
+    expect(parseClientMsg({ t: "draft", action: { type: "mulligan" } })).toEqual({
+      t: "draft",
+      action: { type: "mulligan" },
+    });
+    expect(parseClientMsg({ t: "assignHero", steamId: 123, heroId: 456 })).toEqual({
+      t: "assignHero",
+      steamId: 123,
+      heroId: 456,
+    });
+    expect(parseClientMsg({ t: "beat", action: "skip" })).toEqual({ t: "beat", action: "skip" });
+  });
+
+  it("rejects malformed and unknown payloads", () => {
+    for (const value of [
+      null,
+      [],
+      {},
+      { t: "wat" },
+      { t: "rename", name: 42 },
+      { t: "phrases", phrases: ["gg", 42] },
+      { t: "configure", config: { timerSecs: 10 } },
+      { t: "draft", action: { type: "pick" } },
+      { t: "draft", action: { type: "deny", card: { kind: "hero", heroId: -1 } } },
+      { t: "assignHero", steamId: 1, heroId: 1.5 },
+      { t: "beat", action: "rewind" },
+    ]) {
+      expect(parseClientMsg(value)).toBeNull();
+    }
   });
 });

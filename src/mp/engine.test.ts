@@ -12,9 +12,9 @@ import {
   legalActions,
   openSpread,
   packsPerSpread,
+  type Board,
   type EngineState,
 } from "./engine";
-import type { Board } from "./protocol";
 import type { DataBundle, Pack, PackPlayer, Role } from "../game/types";
 
 // ---------------------------------------------------------------------------
