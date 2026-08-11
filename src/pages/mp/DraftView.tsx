@@ -5,7 +5,14 @@ import { SLOT_IDS, type Slots } from "../../game/draft";
 import { eventShortName, heroImage } from "../../game/data";
 import { computeStrength, heroFitBonus } from "../../game/strength";
 import type { DataBundle, Hero, RosterPlayer, TeamStrength } from "../../game/types";
-import { legalActions, type Board, type CardRef } from "../../mp/engine";
+import {
+  activePackIndex,
+  boardComplete,
+  legalActions,
+  packHolder,
+  type Board,
+  type CardRef,
+} from "../../mp/engine";
 import { NO_DRAFT_CUES, draftCues } from "../../mp/roomView";
 import { synergyHints } from "../../mp/synergy";
 import type { ClientMsg, RoomSnapshot } from "../../mp/protocol";
@@ -89,6 +96,7 @@ function MiniBoard({
   mulligans,
   denies,
   heroById,
+  queued = 0,
 }: {
   name: string;
   board: Board;
@@ -100,6 +108,8 @@ function MiniBoard({
   mulligans: number;
   denies: number;
   heroById: Map<number, Hero>;
+  /** Turbo: packs in this seat's hands (shown when more than one queues up). */
+  queued?: number;
 }) {
   const roster = SLOT_IDS.map((s) => (board.slots as Slots)[s]).filter(Boolean);
   const assignedHeroIds = new Set(
@@ -128,7 +138,11 @@ function MiniBoard({
           {name}
         </span>
         {isMe && <HumanTeamBadge self />}
-        {isTurn && <span className="plate text-[10px] tracking-widest text-bone">picking…</span>}
+        {isTurn && (
+          <span className="plate text-[10px] tracking-widest text-bone">
+            picking…{queued > 1 ? ` +${queued - 1}` : ""}
+          </span>
+        )}
         {!isTurn && isOpener && (
           <span className="plate text-[10px] tracking-widest text-slate-dim">opens</span>
         )}
@@ -237,6 +251,7 @@ export function DraftView({
 }) {
   const d = snapshot.draft!;
   const seats = snapshot.seats;
+  const turbo = d.mode === "turbo";
   const legal = useMemo(
     () =>
       mySeat >= 0
@@ -244,13 +259,31 @@ export function DraftView({
         : { picks: [], canDeny: false, canPass: false, canMulligan: false },
     [d, mySeat],
   );
-  const myTurn = mySeat >= 0 && d.turnSeat === mySeat;
+  // Turbo: my "turn" is the pack in my hands (packs queue behind it while
+  // I think); classic: the one shared turn seat.
+  const myPackIdx = turbo && mySeat >= 0 ? activePackIndex(d, mySeat) : -1;
+  const myTurn = mySeat >= 0 && (turbo ? myPackIdx >= 0 : d.turnSeat === mySeat);
+  const myPackKey =
+    turbo && myPackIdx >= 0 ? `${d.roundSeq}:${d.currentPacks[myPackIdx].id}` : null;
+  const heldBySeat = useMemo(
+    () =>
+      seats.map((_, i) =>
+        turbo ? d.currentPacks.filter((_, pi) => packHolder(d, pi) === i).length : 0,
+      ),
+    [turbo, d, seats],
+  );
   const [denyArmed, setDenyArmed] = useState(false);
-  useEffect(() => setDenyArmed(false), [d.packSeq, d.turnSeat]);
+  useEffect(() => setDenyArmed(false), [d.packSeq, d.turnSeat, myPackKey]);
 
   const now = useNow(250);
+  // Turbo has no shared clock — only my own pack's deadline matters to me.
+  const myDeadline = turbo
+    ? mySeat >= 0
+      ? (d.turnDeadlines?.[mySeat] ?? null)
+      : null
+    : d.turnDeadline;
   const secsLeft =
-    d.turnDeadline != null ? Math.max(0, Math.ceil((d.turnDeadline - now) / 1000)) : null;
+    myDeadline != null ? Math.max(0, Math.ceil((myDeadline - now) / 1000)) : null;
 
   // Dota announcer. WHEN to speak is pure (draftCues in src/mp/roomView.ts);
   // this effect just plays what it says, on every render — the cue state
@@ -263,6 +296,7 @@ export function DraftView({
       roundSeq: d.roundSeq,
       turnSeat: d.turnSeat,
       secsLeft,
+      turnKey: myPackKey ?? undefined,
     });
     cueState.current = r.state;
     r.announce.forEach(announce);
@@ -288,6 +322,11 @@ export function DraftView({
     [d.boards, bundle],
   );
 
+  // Turbo: a seated drafter acts only on the pack in their hands; spectators
+  // (and classic tables) see every open pack.
+  const shownPacks =
+    turbo && mySeat >= 0 ? (myPackIdx >= 0 ? [myPackIdx] : []) : d.currentPacks.map((_, i) => i);
+
   const act = (card: CardRef) => {
     if (denyArmed) {
       send({ t: "draft", action: { type: "deny", card } });
@@ -299,15 +338,21 @@ export function DraftView({
 
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_300px]">
-      {myTurn && d.turnDeadline != null && snapshot.config.timerSecs != null && (
-        <TurnTimer deadline={d.turnDeadline} totalSecs={snapshot.config.timerSecs} />
+      {myTurn && myDeadline != null && snapshot.config.timerSecs != null && (
+        <TurnTimer deadline={myDeadline} totalSecs={snapshot.config.timerSecs} />
       )}
       <section>
         <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
           <div>
             <div className="plate text-sm tracking-widest text-slate-dim">
-              Round #{d.roundSeq} — {seats[d.openerSeat]?.name} opens
-              {d.currentPacks.length > 1 && " a double spread"}
+              {turbo ? (
+                <>Wave #{d.roundSeq} — everyone picks at once</>
+              ) : (
+                <>
+                  Round #{d.roundSeq} — {seats[d.openerSeat]?.name} opens
+                  {d.currentPacks.length > 1 && " a double spread"}
+                </>
+              )}
             </div>
           </div>
           <div className="text-right">
@@ -317,9 +362,17 @@ export function DraftView({
               }`}
             >
               {myTurn && !denyArmed && <span className="live-dot" />}
-              {myTurn ? (denyArmed ? "DENY MODE — click any card to destroy it" : "Your pick") : `Waiting for ${turnName ?? "…"}`}
+              {myTurn
+                ? denyArmed
+                  ? "DENY MODE — click any card to destroy it"
+                  : "Your pick"
+                : turbo
+                  ? mySeat >= 0
+                    ? "Waiting for the chain…"
+                    : "Spectating the chain"
+                  : `Waiting for ${turnName ?? "…"}`}
             </div>
-            {secsLeft != null && d.turnSeat != null && (
+            {secsLeft != null && (turbo ? myTurn : d.turnSeat != null) && (
               <div
                 className={`font-mono text-2xl font-extrabold tabular-nums ${
                   secsLeft <= 10 ? "anim-urgent text-dire" : "text-slate-strong"
@@ -332,63 +385,81 @@ export function DraftView({
         </div>
 
         <div key={`${d.roundSeq}`}>
-          {d.currentPacks.map((pack, pi) => (
-            <div key={pack.id} className={pi > 0 ? "mt-6" : ""}>
-              <div className="mb-2 text-lg font-bold text-bone">
-                {pack.teamName}
-                <span className="ml-2 text-sm font-normal text-slate-dim">
-                  {eventShortName(bundle, pack.eventId)}
-                  {pack.placement != null && <> · finished {ordinal(pack.placement)}</>}
-                </span>
+          {shownPacks.map((packIdx, order) => {
+            const pack = d.currentPacks[packIdx];
+            // In turbo only the pack in my hands is actionable; spectators act on nothing.
+            const actionable = turbo ? myTurn && packIdx === myPackIdx : myTurn;
+            return (
+              <div key={pack.id} className={order > 0 ? "mt-6" : ""}>
+                <div className="mb-2 text-lg font-bold text-bone">
+                  {pack.teamName}
+                  <span className="ml-2 text-sm font-normal text-slate-dim">
+                    {eventShortName(bundle, pack.eventId)}
+                    {pack.placement != null && <> · finished {ordinal(pack.placement)}</>}
+                    {turbo && mySeat < 0 && (
+                      <> · en manos de {seats[packHolder(d, packIdx)]?.name}</>
+                    )}
+                    {turbo && mySeat >= 0 && heldBySeat[mySeat] > 1 && (
+                      <> · +{heldBySeat[mySeat] - 1} en cola</>
+                    )}
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-3">
+                  {pack.players.map((p, i) => {
+                    const ref: CardRef = { kind: "player", steamId: p.steamId };
+                    const pickable = legal.picks.some((c) => sameCard(c, ref));
+                    const clickable = actionable && (denyArmed ? legal.canDeny : pickable);
+                    return (
+                      <CardButton
+                        key={p.steamId}
+                        delay={order * 0.25 + i * 0.06}
+                        disabled={!clickable}
+                        onPick={() => act(ref)}
+                      >
+                        <SynergyTag
+                          steamId={p.steamId}
+                          myBoard={myBoard}
+                          taken={d.takenSteamIds}
+                          bundle={bundle}
+                          nickById={nickById}
+                        />
+                        <PlayerCardContent
+                          p={p}
+                          subtitle={
+                            snapshot.config.cardMode === "event"
+                              ? `${p.team} · ${eventShortName(bundle, p.eventId)}`
+                              : p.team
+                          }
+                        />
+                      </CardButton>
+                    );
+                  })}
+                  {pack.heroes.map((h, i) => {
+                    const ref: CardRef = { kind: "hero", heroId: h };
+                    const pickable = legal.picks.some((c) => sameCard(c, ref));
+                    const clickable = actionable && (denyArmed ? legal.canDeny : pickable);
+                    return (
+                      <CardButton
+                        key={h}
+                        delay={order * 0.25 + 0.3 + i * 0.06}
+                        disabled={!clickable}
+                        onPick={() => act(ref)}
+                      >
+                        <HeroCardContent hero={heroById.get(h)} />
+                      </CardButton>
+                    );
+                  })}
+                </div>
               </div>
-              <div className="flex flex-wrap gap-3">
-                {pack.players.map((p, i) => {
-                  const ref: CardRef = { kind: "player", steamId: p.steamId };
-                  const pickable = legal.picks.some((c) => sameCard(c, ref));
-                  const clickable = myTurn && (denyArmed ? legal.canDeny : pickable);
-                  return (
-                    <CardButton
-                      key={p.steamId}
-                      delay={pi * 0.25 + i * 0.06}
-                      disabled={!clickable}
-                      onPick={() => act(ref)}
-                    >
-                      <SynergyTag
-                        steamId={p.steamId}
-                        myBoard={myBoard}
-                        taken={d.takenSteamIds}
-                        bundle={bundle}
-                        nickById={nickById}
-                      />
-                      <PlayerCardContent
-                        p={p}
-                        subtitle={
-                          snapshot.config.cardMode === "event"
-                            ? `${p.team} · ${eventShortName(bundle, p.eventId)}`
-                            : p.team
-                        }
-                      />
-                    </CardButton>
-                  );
-                })}
-                {pack.heroes.map((h, i) => {
-                  const ref: CardRef = { kind: "hero", heroId: h };
-                  const pickable = legal.picks.some((c) => sameCard(c, ref));
-                  const clickable = myTurn && (denyArmed ? legal.canDeny : pickable);
-                  return (
-                    <CardButton
-                      key={h}
-                      delay={pi * 0.25 + 0.3 + i * 0.06}
-                      disabled={!clickable}
-                      onPick={() => act(ref)}
-                    >
-                      <HeroCardContent hero={heroById.get(h)} />
-                    </CardButton>
-                  );
-                })}
-              </div>
+            );
+          })}
+          {turbo && mySeat >= 0 && myPackIdx < 0 && (
+            <div className="rounded-xl border border-dashed border-ink-700 bg-ink-900/30 px-4 py-10 text-center text-sm text-slate-mid">
+              {myBoard && boardComplete(myBoard)
+                ? "Tu board está completo — esperando a que terminen los demás…"
+                : "Sin pack en mano — la cadena se mueve cuando los demás pickean."}
             </div>
-          ))}
+          )}
         </div>
 
         {myTurn && (
@@ -419,11 +490,44 @@ export function DraftView({
               <button
                 onClick={() => send({ t: "draft", action: { type: "mulligan" } })}
                 className="rounded-lg border border-ink-600 px-4 py-2 text-sm font-semibold text-slate-strong hover:border-slate-mid hover:text-bone"
-                title="Burn this pack before anyone picks — everyone drafts from a replacement."
+                title={
+                  turbo
+                    ? "Burn this freshly dealt pack — you draft from a replacement."
+                    : "Burn this pack before anyone picks — everyone drafts from a replacement."
+                }
               >
                 ↻ Mulligan pack ({mySeat >= 0 ? d.mulligansLeft[mySeat] : 0})
               </button>
             )}
+          </div>
+        )}
+
+        {turbo && d.currentPacks.length > 0 && (
+          <div className="mt-5">
+            <div className="plate mb-1.5 text-sm tracking-widest text-slate-dim">La cadena</div>
+            <div className="flex flex-wrap gap-1.5">
+              {d.currentPacks.map((p, i) => {
+                const holder = packHolder(d, i);
+                const isMine = mySeat >= 0 && holder === mySeat;
+                return (
+                  <span
+                    key={p.id}
+                    className={`flex items-center gap-1 rounded-sm border px-2 py-0.5 text-[11px] ${
+                      isMine
+                        ? "border-bone/50 bg-ink-800/70 text-bone"
+                        : "border-ink-600 bg-ink-900/60 text-slate-mid"
+                    }`}
+                    title={`opened by ${seats[d.packDealtTo[i]]?.name} · ${
+                      p.players.length + p.heroes.length
+                    } cards left`}
+                  >
+                    {p.teamName}
+                    <span className="text-slate-dim">· {seats[holder]?.name}</span>
+                    {isMine && <HumanTeamBadge self />}
+                  </span>
+                );
+              })}
+            </div>
           </div>
         )}
 
@@ -461,12 +565,13 @@ export function DraftView({
             board={d.boards[i]}
             strength={strengths[i]}
             isMe={i === mySeat}
-            isTurn={d.turnSeat === i}
-            isOpener={d.openerSeat === i}
+            isTurn={turbo ? heldBySeat[i] > 0 : d.turnSeat === i}
+            isOpener={!turbo && d.openerSeat === i}
             connected={s.connected}
             mulligans={d.mulligansLeft[i]}
             denies={d.deniesLeft[i]}
             heroById={heroById}
+            queued={heldBySeat[i]}
           />
         ))}
       </aside>

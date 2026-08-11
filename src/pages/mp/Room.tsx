@@ -117,8 +117,12 @@ export default function Room() {
       {stinger && (
         <Stinger
           eyebrow={`Sala ${code}`}
-          title="El Draft"
-          sub="packs compartidos · players exclusivos"
+          title={snapshot.config.draftMode === "turbo" ? "El Draft Turbo" : "El Draft"}
+          sub={
+            snapshot.config.draftMode === "turbo"
+              ? "packs en cadena · todos pickean a la vez"
+              : "packs compartidos · players exclusivos"
+          }
           onDone={() => setStinger(false)}
         />
       )}
@@ -408,6 +412,22 @@ function LobbyView({
               disabled={!isHost}
             />
           ))}
+        </Section>
+        <Section label="Draft Mode">
+          <OptionCard
+            title="Clásico"
+            desc="One shared pack; picks go around the table in turns."
+            selected={(c.draftMode ?? "classic") === "classic"}
+            onClick={() => set({ draftMode: "classic" })}
+            disabled={!isHost}
+          />
+          <OptionCard
+            title="Turbo"
+            desc="Everyone opens their own pack and picks at once — leftovers chain to the next drafter."
+            selected={c.draftMode === "turbo"}
+            onClick={() => set({ draftMode: "turbo" })}
+            disabled={!isHost}
+          />
         </Section>
         <Section label="Format">
           <OptionCard

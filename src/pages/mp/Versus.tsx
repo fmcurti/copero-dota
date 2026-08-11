@@ -39,27 +39,29 @@ export default function Versus() {
         </p>
       </div>
 
-      <div className="space-y-6">
+      {/* One narrow centered column under the centered title — the controls
+          share its full width so nothing hugs the page's left edge. */}
+      <div className="mx-auto max-w-sm space-y-6">
         <Section label="Your Team Name">
           <input
             value={teamName}
             onChange={(e) => setTeamName(e.target.value)}
             maxLength={30}
-            className="w-full rounded-lg border border-ink-700 bg-ink-900/40 px-4 py-3 text-sm text-bone outline-none focus:border-slate-mid sm:w-72"
+            className="w-full rounded-lg border border-ink-700 bg-ink-900/40 px-4 py-3 text-sm text-bone outline-none focus:border-slate-mid"
           />
         </Section>
 
         <Section label="Create">
           <button
             onClick={() => navigate(`/mp/${makeRoomCode()}`)}
-            className="cta-dota plate w-full rounded-lg py-4 text-lg font-bold tracking-widest sm:w-72"
+            className="cta-dota plate w-full rounded-lg py-4 text-lg font-bold tracking-widest"
           >
             Create Lobby
           </button>
         </Section>
 
         <Section label="Join">
-          <div className="flex w-full gap-2 sm:w-72">
+          <div className="flex w-full gap-2">
             <input
               value={joinCode}
               onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
@@ -79,9 +81,10 @@ export default function Versus() {
         </Section>
       </div>
 
-      <div className="mt-10">
+      {/* Wider than the form column (rows carry more text) but centered with it. */}
+      <div className="mx-auto mt-10 max-w-xl">
         <Section label="Open lobbies">
-          <div className="w-full space-y-2">
+          <div className="w-full space-y-2 text-center">
             {open.length ? (
               open.map((room) => (
                 <RoomRow

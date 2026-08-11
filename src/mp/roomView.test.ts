@@ -310,4 +310,21 @@ describe("draftCues", () => {
     expect(r.announce).toEqual([]);
     expect(r.state).toBe(NO_DRAFT_CUES);
   });
+
+  it("turbo keys the turn by the pack in hand, not the shared seat rotation", () => {
+    const inHand = (turnKey: string) => ({
+      myTurn: true,
+      roundSeq: 1,
+      turnSeat: null,
+      secsLeft: null,
+      turnKey,
+    });
+    let r = draftCues(NO_DRAFT_CUES, inHand("1:pk1"));
+    expect(r.announce).toEqual(["yourTurn"]);
+    r = draftCues(r.state, inHand("1:pk1"));
+    expect(r.announce).toEqual([]);
+    // the next pack chains into my hands — same round, new announcement
+    r = draftCues(r.state, inHand("1:pk2"));
+    expect(r.announce).toEqual(["yourTurn"]);
+  });
 });

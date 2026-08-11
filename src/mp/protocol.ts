@@ -1,5 +1,5 @@
 import type { CardMode, GameFormat, HeroAlloc, SimTeam, TeamStrength } from "../game/types";
-import type { Action, CardRef, EngineState } from "./engine";
+import type { Action, CardRef, DraftMode, EngineState } from "./engine";
 
 // ---------------------------------------------------------------------------
 // Versus wire contract. Everything in this game is public information (open
@@ -20,6 +20,9 @@ export interface MpConfig {
   format: GameFormat;
   cardMode: CardMode;
   heroAlloc: HeroAlloc;
+  /** classic = one shared spread, turns around the table; turbo = every seat
+   *  holds its own pack and picks at once, leftovers chain to the next seat. */
+  draftMode: DraftMode;
   timerSecs: 7 | 15 | 25 | null;
   mulligans: 0 | 1 | 2;
   visibility: RoomVisibility;
@@ -29,6 +32,7 @@ export const DEFAULT_MP_CONFIG: MpConfig = {
   format: "valve_legacy",
   cardMode: "career",
   heroAlloc: "auto",
+  draftMode: "classic",
   timerSecs: 15,
   mulligans: 1,
   visibility: "private",
@@ -59,11 +63,14 @@ export interface Seat {
 
 export type DraftPublic = Pick<
   EngineState,
+  | "mode"
   | "packSeq"
   | "roundSeq"
   | "openerSeat"
   | "turnSeat"
   | "currentPacks"
+  | "packDealtTo"
+  | "packPassCount"
   | "boards"
   | "takenSteamIds"
   | "deniedShelf"
@@ -72,6 +79,8 @@ export type DraftPublic = Pick<
 > & {
   /** Epoch ms the current turn autopicks, or null (timer off / no turn). */
   turnDeadline: number | null;
+  /** Turbo: each seat's autopick deadline for the pack in its hands. */
+  turnDeadlines: (number | null)[] | null;
 };
 
 export interface RoomSnapshot {
@@ -148,6 +157,10 @@ function parseConfig(value: unknown): Partial<MpConfig> | null {
   if (value.heroAlloc !== undefined) {
     if (value.heroAlloc !== "auto" && value.heroAlloc !== "manual") return null;
     config.heroAlloc = value.heroAlloc;
+  }
+  if (value.draftMode !== undefined) {
+    if (value.draftMode !== "classic" && value.draftMode !== "turbo") return null;
+    config.draftMode = value.draftMode;
   }
   if (value.timerSecs !== undefined) {
     if (value.timerSecs !== 7 && value.timerSecs !== 15 && value.timerSecs !== 25 && value.timerSecs !== null)

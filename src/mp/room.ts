@@ -6,9 +6,11 @@ import { computeStrength, swapHeroAssignment } from "../game/strength";
 import type { DataBundle, Pack, SimResult, SimTeam, TeamStrength } from "../game/types";
 import { autopick } from "./autopick";
 import {
+  activePackIndex,
   applyAction,
   boardRoster,
   createDraft,
+  dealTurbo,
   openSpread,
   type EngineState,
 } from "./engine";
@@ -47,6 +49,9 @@ export interface RoomState {
   seats: Seat[];
   engine: EngineState | null;
   turnDeadline: number | null;
+  /** Turbo drafts: each seat's autopick deadline for the pack in its hands,
+   *  parallel to seats. Null in classic mode / with the timer off. */
+  turnDeadlines: (number | null)[] | null;
   strengths: TeamStrength[] | null;
   heroAssignments: Record<string, number>[] | null;
   fieldSeed: number | null;
@@ -68,6 +73,7 @@ export const freshRoom = (): RoomState => ({
   seats: [],
   engine: null,
   turnDeadline: null,
+  turnDeadlines: null,
   strengths: null,
   heroAssignments: null,
   fieldSeed: null,
@@ -138,7 +144,13 @@ export function needsData(state: RoomState, event: RoomEvent): boolean {
  * The host reconciles storage to this after every event.
  */
 export function nextAlarm(state: RoomState, opts: { now: number; empty: boolean }): number | null {
-  if (state.phase === "drafting") return state.turnDeadline;
+  if (state.phase === "drafting") {
+    if (state.turnDeadlines) {
+      const armed = state.turnDeadlines.filter((d): d is number => d != null);
+      return armed.length ? Math.min(...armed) : null;
+    }
+    return state.turnDeadline;
+  }
   if (state.phase === "broadcasting" && state.beat?.playing) return state.beatDeadline;
   if (state.phase === "done" && opts.empty) return opts.now + CLEANUP_MS;
   return null;
@@ -210,6 +222,9 @@ function onClose(r: RoomState, ctx: RoomCtx): RoomResult {
 // ---- the one alarm: turn timeout / beat ticker / cleanup ----
 
 function onAlarm(r: RoomState, ctx: RoomCtx): RoomResult {
+  if (r.phase === "drafting" && r.engine?.mode === "turbo") {
+    return onTurboAlarm(r, ctx);
+  }
   if (r.phase === "drafting" && r.engine && r.engine.turnSeat != null) {
     if (r.turnDeadline == null || ctx.now < r.turnDeadline - 500) {
       return { state: r, changed: false }; // stale — the turn was re-armed
@@ -323,6 +338,7 @@ function onMessage(
       r.draftSeed = Math.floor(ctx.random() * 1e9);
       r.engine = createDraft(r.seats.length, {
         mulligans: r.config.mulligans,
+        mode: r.config.draftMode,
         // The first opener is drawn, not handed to the host — from there the
         // usual rotation applies, so everyone still opens once per cycle.
         openerSeat: Math.floor(seeded(r.draftSeed, 0xc0ffee)() * r.seats.length),
@@ -335,11 +351,12 @@ function onMessage(
     case "draft": {
       if (r.phase !== "drafting" || !r.engine)
         return err(r, "bad-phase", "No draft in progress.");
+      const prevKeys = r.engine.mode === "turbo" ? turboActiveKeys(r.engine) : null;
       const res = applyAction(r.engine, seat, msg.action);
       if (res.error) return err(r, res.error, `Illegal action (${res.error}).`);
       r.engine = res.state;
       openUntilTurn(r, ctx);
-      afterDraftStep(r, ctx);
+      afterDraftStep(r, ctx, prevKeys);
       return { state: r, changed: true };
     }
     case "assignHero": {
@@ -396,33 +413,94 @@ function onMessage(
 
 // ---- draft plumbing ----
 
-/** The pack RNG for the next spread: replayable when the draft is seeded. */
+/** The pack RNG for the next spread: replayable when the draft is seeded.
+ *  Turbo deals also salt with packSeq so every deal gets its own stream
+ *  (mulligan replacements land mid-wave, at the same roundSeq). */
 function spreadRng(r: RoomState, e: EngineState, ctx: RoomCtx): Rng {
-  return r.draftSeed != null ? seeded(r.draftSeed, e.roundSeq) : ctx.random;
+  if (r.draftSeed == null) return ctx.random;
+  return e.mode === "turbo"
+    ? seeded(r.draftSeed, e.roundSeq, e.packSeq)
+    : seeded(r.draftSeed, e.roundSeq);
 }
 
-/** Reveal spreads until someone has a turn (or the draft is done). */
+/** Reveal spreads (or turbo waves and owed replacements) until someone has a
+ *  turn (or the draft is done). */
 function openUntilTurn(r: RoomState, ctx: RoomCtx) {
   let e = r.engine!;
   let guard = 0;
-  while (!e.done && !e.currentPacks.length && guard++ < 60) {
-    e = openSpread(e, ctx.data!.pool, spreadRng(r, e, ctx));
+  if (e.mode === "turbo") {
+    while (!e.done && (e.owedPacks.length || !e.currentPacks.length) && guard++ < 80) {
+      e = dealTurbo(e, ctx.data!.pool, spreadRng(r, e, ctx));
+    }
+  } else {
+    while (!e.done && !e.currentPacks.length && guard++ < 60) {
+      e = openSpread(e, ctx.data!.pool, spreadRng(r, e, ctx));
+    }
   }
   r.engine = e;
 }
 
-function afterDraftStep(r: RoomState, ctx: RoomCtx) {
+function afterDraftStep(r: RoomState, ctx: RoomCtx, prevKeys?: (string | null)[] | null) {
   if (r.engine!.done) assemble(r, ctx);
-  else armTurn(r, ctx);
+  else armTurn(r, ctx, prevKeys);
 }
 
-function armTurn(r: RoomState, ctx: RoomCtx) {
+/** Turbo: each seat's "turn" is the pack in its hands — key deadlines by it. */
+function turboActiveKeys(e: EngineState): (string | null)[] {
+  return Array.from({ length: e.numSeats }, (_, seat) => {
+    const i = activePackIndex(e, seat);
+    return i >= 0 ? e.currentPacks[i].id : null;
+  });
+}
+
+function armTurn(r: RoomState, ctx: RoomCtx, prevKeys?: (string | null)[] | null) {
   const e = r.engine;
   const secs = r.config.timerSecs;
+  if (e?.mode === "turbo") {
+    r.turnDeadline = null;
+    if (r.phase !== "drafting" || e.done || secs == null) {
+      r.turnDeadlines = null;
+      return;
+    }
+    const prev = r.turnDeadlines;
+    r.turnDeadlines = turboActiveKeys(e).map((key, seat) => {
+      if (key == null) return null;
+      // A running clock survives only while the same pack is still in hand.
+      if (prevKeys && prevKeys[seat] === key && prev?.[seat] != null) return prev[seat];
+      return ctx.now + secs * 1000;
+    });
+    return;
+  }
+  r.turnDeadlines = null;
   r.turnDeadline =
     r.phase === "drafting" && e && e.turnSeat != null && secs != null
       ? ctx.now + secs * 1000
       : null;
+}
+
+/** Autopick every seat whose clock ran out — each one re-settles the chain,
+ *  which can hand other seats new packs (their clocks re-arm, not expire). */
+function onTurboAlarm(r: RoomState, ctx: RoomCtx): RoomResult {
+  let changed = false;
+  for (let guard = 0; guard < 64; guard++) {
+    if (r.phase !== "drafting" || !r.engine || !r.turnDeadlines) break;
+    const seat = r.turnDeadlines.findIndex((d) => d != null && ctx.now >= d - 500);
+    if (seat < 0) break;
+    const prevKeys = turboActiveKeys(r.engine);
+    const action = autopick(r.engine, seat, ctx.data!.bundle.playerHeroStats);
+    const res = applyAction(r.engine, seat, action);
+    if (res.error) {
+      // Unreachable in practice; never let a bad deadline wedge the alarm.
+      r.turnDeadlines = r.turnDeadlines.map((d, i) => (i === seat ? null : d));
+      changed = true;
+      continue;
+    }
+    r.engine = res.state;
+    openUntilTurn(r, ctx);
+    afterDraftStep(r, ctx, prevKeys);
+    changed = true;
+  }
+  return { state: r, changed };
 }
 
 function assemble(r: RoomState, ctx: RoomCtx) {
@@ -444,6 +522,7 @@ function assemble(r: RoomState, ctx: RoomCtx) {
   r.simSeed = Math.floor(ctx.random() * 1e9);
   r.phase = "assembled";
   r.turnDeadline = null;
+  r.turnDeadlines = null;
 }
 
 /** Recalculate strengths and the seeded field after a manual hero swap. */
@@ -504,12 +583,16 @@ export function snapshotOf(r: RoomState, sim: SimProvider): RoomSnapshot {
     seats: r.seats,
     draft: e
       ? {
+          mode: e.mode,
           packSeq: e.packSeq,
           roundSeq: e.roundSeq,
           openerSeat: e.openerSeat,
           turnSeat: e.turnSeat,
           turnDeadline: r.turnDeadline,
+          turnDeadlines: r.turnDeadlines,
           currentPacks: e.currentPacks,
+          packDealtTo: e.packDealtTo,
+          packPassCount: e.packPassCount,
           boards: e.boards,
           takenSteamIds: e.takenSteamIds,
           deniedShelf: e.deniedShelf,
@@ -538,11 +621,19 @@ export function migrateRoom(stored: RoomState, now: number): RoomState {
     delete e.currentPack;
     e.roundSeq ??= e.packSeq;
   }
+  // Rooms persisted before turbo mode existed are classic drafts.
+  if (e) {
+    e.mode ??= "classic";
+    e.packDealtTo ??= [];
+    e.packPassCount ??= [];
+    e.owedPacks ??= [];
+  }
   stored.config = sanitizeConfig(stored.config);
   stored.heroAssignments ??= null;
   stored.phrases ??= {};
   stored.draftSeed ??= null;
   stored.beatDeadline ??= null;
+  stored.turnDeadlines ??= null;
   // A pre-reducer room caught mid-reveal has no stored deadline — tick soon
   // rather than stalling the broadcast for everyone.
   if (stored.phase === "broadcasting" && stored.beat?.playing && stored.beatDeadline == null) {
@@ -556,6 +647,7 @@ export function sanitizeConfig(c: MpConfig): MpConfig {
     format: c.format === "standard" ? "standard" : "valve_legacy",
     cardMode: c.cardMode === "peak" || c.cardMode === "event" ? c.cardMode : "career",
     heroAlloc: c.heroAlloc === "manual" ? "manual" : "auto",
+    draftMode: c.draftMode === "turbo" ? "turbo" : "classic",
     timerSecs: c.timerSecs === 7 || c.timerSecs === 25 || c.timerSecs === null ? c.timerSecs : 15,
     mulligans: c.mulligans === 0 || c.mulligans === 2 ? c.mulligans : 1,
     // Rooms that predate the directory have no visibility at all — falling to

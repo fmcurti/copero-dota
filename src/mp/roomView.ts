@@ -199,10 +199,18 @@ export const NO_DRAFT_CUES: DraftCueState = { announcedTurn: null, warnedTurn: n
 
 export function draftCues(
   prev: DraftCueState,
-  facts: { myTurn: boolean; roundSeq: number; turnSeat: number | null; secsLeft: number | null },
+  facts: {
+    myTurn: boolean;
+    roundSeq: number;
+    turnSeat: number | null;
+    secsLeft: number | null;
+    /** Turbo drafts override the key — a turn there is a pack in my hands,
+     *  not a shared seat rotation. */
+    turnKey?: string;
+  },
 ): { state: DraftCueState; announce: AnnouncerClip[] } {
   if (!facts.myTurn) return { state: prev, announce: [] };
-  const key = `${facts.roundSeq}:${facts.turnSeat}`;
+  const key = facts.turnKey ?? `${facts.roundSeq}:${facts.turnSeat}`;
   const announce: AnnouncerClip[] = [];
   let state = prev;
   if (state.announcedTurn !== key) {

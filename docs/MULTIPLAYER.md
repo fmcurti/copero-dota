@@ -22,9 +22,9 @@ dramatic sim decides the Copero.
   whole spread.
 - Host configures: format (valve_legacy/standard), **card mode (career
   default** / peak / event), hero allocation (**automatic** default / manual),
-  turn timer (**7/15/25/off**, default 15 — retuned from 30/45/90 after
-  playtesting: drafts dragged), mulligans per drafter (default 1, range 0–2
-  as the difficulty knob).
+  **draft mode (classic default / turbo)**, turn timer (**7/15/25/off**,
+  default 15 — retuned from 30/45/90 after playtesting: drafts dragged),
+  mulligans per drafter (default 1, range 0–2 as the difficulty knob).
 - Join by room code. Reconnect = replay current snapshot from the DO.
 - Visitors are auto-seated while the lobby has room. A seated drafter can sit
   out before the draft starts (and reclaim an open seat); visitors to a full,
@@ -63,6 +63,34 @@ dramatic sim decides the Copero.
 - Pack drawing uses the soft-lock-proof filtered draw (see FINDINGS.md),
   evaluated against the union of all boards' needs so every revealed pack is
   pickable by at least the opener.
+
+### Turbo mode — the booster chain (added 2026-08-11)
+
+Everything above describes **classic** mode. **Turbo** keeps the same cards,
+legality, exclusivity, Deny and chemistry rules, but removes the shared turn:
+
+- Each round deals a **wave**: one pack per incomplete seat, dealt to that
+  seat (player-disjoint across the wave; same filtered draw, preferring packs
+  the dealt seat can pick from). Everyone picks **simultaneously**.
+- Acting on a pack (pick or Deny) passes its leftovers to the next seat in
+  the chain. Packs queue at a busy seat in arrival order; you always act on
+  the pack that reached you first.
+- **Skip rule** (the "nothing fits" case): a pack an arriving seat cannot
+  pick from — board complete, roles already filled, all five heroes drafted —
+  passes through by itself, instantly and without penalty. There is no manual
+  Pass in turbo; an unpickable pack never waits in your hands, so the chain
+  cannot stall on a finished board.
+- A pack every seat has acted on (or been skipped past) is **discarded**;
+  when the whole wave is discarded and boards are still incomplete, the next
+  wave is dealt. The draft ends the moment every board holds 5+5 (in-flight
+  packs are dropped).
+- **Deny** works only on the pack in your hands (it replaces your pick).
+  **Mulligan** burns your own freshly dealt pack — before anyone has acted on
+  it — and a replacement is dealt back to you; the rest of the wave is
+  untouched.
+- **Timer**: per-seat clocks. Your clock arms when a pack reaches your empty
+  hands and re-arms per pack; timeout autopicks only your pack. The DO's one
+  alarm slot holds the earliest armed clock.
 
 ### Tournament
 - Field = N human teams + (18−N) AI teams.
