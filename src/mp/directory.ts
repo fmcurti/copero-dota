@@ -1,49 +1,78 @@
-import { MAX_SEATS, type Phase, type RoomVisibility } from "./protocol";
+import { MAX_SEATS, type Phase, type RoomVisibility, type Seat } from "./protocol";
 
 // ---------------------------------------------------------------------------
-// The room directory, minus all the plumbing. Durable Objects can't be listed,
-// so rooms announce themselves into one global directory DO and the home page
-// reads it back. This module is the part both ends share: what an entry looks
-// like, which list it belongs on, and when it has gone stale.
+// The Directory policy module. Rooms, the Directory Durable Object, and the
+// browser all use the same two operations:
 //
-// Visibility *policy* is not here — the room decides whether it has a listing
-// at all (see listingFor() in worker/index.ts). An entry that reaches this
-// module is already safe to show to anyone.
+// - roomDirectory decides whether a Room is safe to publish and whether its
+//   current listing needs announcing.
+// - directoryView derives everything consumers may do with stored listings:
+//   show them, bucket them, probe them, or evict them.
+//
+// Durable Object RPC, storage, probes, and browser fetch stay in adapters.
 // ---------------------------------------------------------------------------
 
 export interface RoomListing {
-  /** The room code, verbatim — it is also the Durable Object name, so casing matters. */
+  /** The Room code, verbatim — it is also the Durable Object name. */
   code: string;
   visibility: Exclude<RoomVisibility, "private">;
   phase: Phase;
-  /** Drafters seated, and the cap they are filling. */
   seats: number;
   maxSeats: number;
   host: string;
-  /** Seat names in seat order — the flavour that makes a row worth reading. */
   teams: string[];
-  /** Connected but unseated. */
+  /** Connected but unseated visitors. */
   watchers: number;
-  /** Room-side stamp. Publishes are fire-and-forget, so this orders them. */
+  /** Room-side stamp. Fire-and-forget publishes use this for ordering. */
   rev: number;
-  /** Directory-side stamp of the last time this entry was confirmed alive. */
+  /** Directory-side stamp of the last liveness confirmation. */
   updatedAt: number;
 }
 
-/** An entry as the room sends it — the directory stamps `updatedAt` itself. */
 export type DirectoryEntry = Omit<RoomListing, "updatedAt">;
 
-/** Past this without confirmation, an entry is never shown and gets swept. */
-export const LISTING_TTL_MS = 20 * 60_000;
-/** Older than this and the directory wakes the room to ask if anyone is left. */
-export const PROBE_AFTER_MS = 6 * 60_000;
-export const DIRECTORY_TICK_MS = 2 * 60_000;
-/** A room re-publishes an unchanged entry at most this often, to stay fresh. */
-export const TOUCH_MS = 5 * 60_000;
-export const MAX_LISTINGS = 200;
-export const MAX_PROBES_PER_TICK = 20;
+export interface DirectoryPublicationState {
+  key: string;
+  publishedAt: number;
+}
 
-/** Lower sorts first: games in progress above lobbies, finished last. */
+export interface RoomDirectoryFacts {
+  code: string;
+  visibility: RoomVisibility;
+  phase: Phase;
+  seats: Seat[];
+  /** playerIds with at least one open connection. Duplicates are harmless. */
+  connectedPlayerIds: Iterable<string>;
+  now: number;
+}
+
+export interface RoomDirectoryResult {
+  /** The listing currently safe to expose, or null when the Room is hidden. */
+  entry: DirectoryEntry | null;
+  /** undefined means the cached publication is still fresh and unchanged. */
+  publication: DirectoryEntry | null | undefined;
+  state: DirectoryPublicationState;
+}
+
+export interface DirectoryView {
+  /** Fresh listings safe to return from /api/rooms. */
+  rooms: RoomListing[];
+  openLobbies: RoomListing[];
+  liveGames: RoomListing[];
+  staleCodes: string[];
+  probeCodes: string[];
+  overflowCodes: string[];
+  /** Next Directory alarm, or null when no listing remains. */
+  nextTickAt: number | null;
+}
+
+const LISTING_TTL_MS = 20 * 60_000;
+const PROBE_AFTER_MS = 6 * 60_000;
+const DIRECTORY_TICK_MS = 2 * 60_000;
+const TOUCH_MS = 5 * 60_000;
+const MAX_LISTINGS = 200;
+const MAX_PROBES_PER_TICK = 20;
+
 const PHASE_RANK: Record<Phase, number> = {
   drafting: 0,
   assembled: 1,
@@ -52,26 +81,86 @@ const PHASE_RANK: Record<Phase, number> = {
   done: 4,
 };
 
-export const isFresh = (l: RoomListing, now: number): boolean =>
-  now - l.updatedAt < LISTING_TTL_MS;
+const listingKey = (entry: DirectoryEntry | null): string =>
+  entry === null
+    ? "none"
+    : JSON.stringify([
+        entry.code,
+        entry.visibility,
+        entry.phase,
+        entry.seats,
+        entry.maxSeats,
+        entry.watchers,
+        entry.host,
+        entry.teams,
+      ]);
 
-/** Home page: a public lobby with room to spare, which anyone may walk into. */
-export const isJoinable = (l: RoomListing): boolean =>
-  l.visibility === "public" && l.phase === "lobby" && l.seats < l.maxSeats;
+function listingOf(facts: RoomDirectoryFacts): DirectoryEntry | null {
+  const { visibility, phase, seats, now } = facts;
+  if (visibility === "private" || phase === "done") return null;
+  if (visibility === "spectatable" && phase === "lobby") return null;
 
-/** Watch page: a game already under way. Lobbies and finished rooms never qualify. */
-export const isWatchable = (l: RoomListing): boolean =>
-  l.phase === "drafting" || l.phase === "assembled" || l.phase === "broadcasting";
+  const connected = new Set(facts.connectedPlayerIds);
+  if (connected.size === 0) return null;
 
-export function openLobbies(all: RoomListing[], now: number): RoomListing[] {
-  return all
-    .filter((l) => isFresh(l, now) && isJoinable(l))
-    .sort((a, b) => b.seats - a.seats || b.rev - a.rev || a.code.localeCompare(b.code));
+  const seated = new Set(seats.map((seat) => seat.playerId));
+  let watchers = 0;
+  for (const playerId of connected) if (!seated.has(playerId)) watchers++;
+
+  return {
+    code: facts.code,
+    visibility,
+    phase,
+    seats: seats.length,
+    maxSeats: MAX_SEATS,
+    host: seats.find((seat) => seat.isHost)?.name ?? "",
+    teams: seats.map((seat) => seat.name),
+    watchers,
+    rev: now,
+  };
 }
 
-export function liveGames(all: RoomListing[], now: number): RoomListing[] {
-  return all
-    .filter((l) => isFresh(l, now) && isWatchable(l))
+/**
+ * Derive the Room's safe listing and its next publication. Unchanged visible
+ * listings get a periodic touch; repeated retractions cost nothing.
+ */
+export function roomDirectory(
+  facts: RoomDirectoryFacts,
+  previous: DirectoryPublicationState | null,
+): RoomDirectoryResult {
+  const entry = listingOf(facts);
+  const key = listingKey(entry);
+  const shouldPublish =
+    previous === null ||
+    previous.key !== key ||
+    (entry !== null && facts.now - previous.publishedAt >= TOUCH_MS);
+  const state = shouldPublish
+    ? { key, publishedAt: facts.now }
+    : (previous as DirectoryPublicationState);
+  return { entry, publication: shouldPublish ? entry : undefined, state };
+}
+
+/** Derive every public and maintenance view of the stored Directory. */
+export function directoryView(all: RoomListing[], now: number): DirectoryView {
+  const fresh = (listing: RoomListing) => now - listing.updatedAt < LISTING_TTL_MS;
+  const rooms = all.filter(fresh);
+  const openLobbies = rooms
+    .filter(
+      (listing) =>
+        listing.visibility === "public" &&
+        listing.phase === "lobby" &&
+        listing.seats < listing.maxSeats,
+    )
+    .sort(
+      (a, b) => b.seats - a.seats || b.rev - a.rev || a.code.localeCompare(b.code),
+    );
+  const liveGames = rooms
+    .filter(
+      (listing) =>
+        listing.phase === "drafting" ||
+        listing.phase === "assembled" ||
+        listing.phase === "broadcasting",
+    )
     .sort(
       (a, b) =>
         PHASE_RANK[a.phase] - PHASE_RANK[b.phase] ||
@@ -79,46 +168,27 @@ export function liveGames(all: RoomListing[], now: number): RoomListing[] {
         b.seats - a.seats ||
         a.code.localeCompare(b.code),
     );
-}
-
-/** Rotted past the TTL — delete outright. */
-export const staleCodes = (all: RoomListing[], now: number): string[] =>
-  all.filter((l) => !isFresh(l, now)).map((l) => l.code);
-
-/** Quiet for a while but not yet rotted: wake and re-confirm, oldest first. */
-export const probeCodes = (all: RoomListing[], now: number): string[] =>
-  all
-    .filter((l) => isFresh(l, now) && now - l.updatedAt >= PROBE_AFTER_MS)
+  const staleCodes = all.filter((listing) => !fresh(listing)).map((listing) => listing.code);
+  const probeCodes = rooms
+    .filter((listing) => now - listing.updatedAt >= PROBE_AFTER_MS)
     .sort((a, b) => a.updatedAt - b.updatedAt)
     .slice(0, MAX_PROBES_PER_TICK)
-    .map((l) => l.code);
+    .map((listing) => listing.code);
+  const overflowCodes =
+    all.length <= MAX_LISTINGS
+      ? []
+      : [...all]
+          .sort((a, b) => a.updatedAt - b.updatedAt)
+          .slice(0, all.length - MAX_LISTINGS)
+          .map((listing) => listing.code);
 
-/** Over cap: evict the least recently confirmed. */
-export const overflowCodes = (all: RoomListing[]): string[] =>
-  all.length <= MAX_LISTINGS
-    ? []
-    : [...all]
-        .sort((a, b) => a.updatedAt - b.updatedAt)
-        .slice(0, all.length - MAX_LISTINGS)
-        .map((l) => l.code);
-
-/**
- * Dedupe key: everything a viewer can see, and nothing else — the clocks are
- * left out on purpose. A room compares this against its last publish, so a
- * 40-pick draft, which changes nothing on a list row, costs zero writes.
- */
-export const listingKey = (l: DirectoryEntry | null): string =>
-  l === null
-    ? "none"
-    : JSON.stringify([
-        l.code,
-        l.visibility,
-        l.phase,
-        l.seats,
-        l.maxSeats,
-        l.watchers,
-        l.host,
-        l.teams,
-      ]);
-
-export { MAX_SEATS };
+  return {
+    rooms,
+    openLobbies,
+    liveGames,
+    staleCodes,
+    probeCodes,
+    overflowCodes,
+    nextTickAt: all.length > 0 ? now + DIRECTORY_TICK_MS : null,
+  };
+}

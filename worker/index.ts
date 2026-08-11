@@ -9,10 +9,12 @@ import { fetchBundle } from "../src/game/bundle";
 import { buildCardPool } from "../src/game/cards";
 import { simulateTournament } from "../src/game/sim";
 import type { DataBundle, Pack, SimResult } from "../src/game/types";
-import { listingKey, TOUCH_MS, type DirectoryEntry } from "../src/mp/directory";
+import {
+  roomDirectory,
+  type DirectoryPublicationState,
+} from "../src/mp/directory";
 import {
   DEFAULT_NAME,
-  MAX_SEATS,
   parseClientMsg,
   sanitizeName,
   type ServerMsg,
@@ -59,10 +61,9 @@ export class CoperoRoom extends Server<Env> {
   private bundle: DataBundle | null = null;
   private pool: Pack[] | null = null;
   private sim: { beats: Beat[]; result: SimResult; forSeed: number | null } | null = null;
-  /** Last listing published, so an unchanged room costs nothing. In-memory on
-   *  purpose: a hibernation wake clears it and the next event re-announces. */
-  private lastListing: string | null = null;
-  private lastListingAt = 0;
+  /** In-memory on purpose: a hibernation wake clears the publication cache and
+   *  the next event re-announces the Room. */
+  private directoryState: DirectoryPublicationState | null = null;
 
   async onStart() {
     const stored = await this.ctx.storage.get<RoomState>("room");
@@ -186,45 +187,19 @@ export class CoperoRoom extends Server<Env> {
 
   // ---- directory ----
 
-  /**
-   * This room's public listing, or null if it must not be advertised.
-   *
-   * Every rule about who can find a room lives here and nowhere else, so a
-   * listing that exists is a listing that is safe to show to anyone — the
-   * directory can never leak a private room's code.
-   */
-  private listingFor(): DirectoryEntry | null {
-    const r = this.room;
-    const visibility = r.config.visibility;
-    if (visibility === "private") return null;
-    if (r.phase === "done") return null;
-    // Spectatable rooms stay hidden until there is something to spectate.
-    if (visibility === "spectatable" && r.phase === "lobby") return null;
-
-    const seated = new Set(r.seats.map((s) => s.playerId));
-    const here = new Set<string>();
-    let watchers = 0;
-    for (const c of this.getConnections()) {
-      const st = c.state as ConnState;
-      if (!st?.playerId || here.has(st.playerId)) continue;
-      here.add(st.playerId);
-      if (!seated.has(st.playerId)) watchers++;
-    }
-    // Nobody home, nothing to advertise — in any phase. This one rule is what
-    // keeps abandoned rooms off the lists without a reaper chasing them.
-    if (here.size === 0) return null;
-
-    return {
-      code: this.name,
-      visibility,
-      phase: r.phase,
-      seats: r.seats.length,
-      maxSeats: MAX_SEATS,
-      host: r.seats.find((s) => s.isHost)?.name ?? "",
-      teams: r.seats.map((s) => s.name),
-      watchers,
-      rev: Date.now(),
-    };
+  /** Current Directory decision. All visibility and watcher policy is pure. */
+  private directoryAt(now: number, previous = this.directoryState) {
+    return roomDirectory(
+      {
+        code: this.name,
+        visibility: this.room.config.visibility,
+        phase: this.room.phase,
+        seats: this.room.seats,
+        connectedPlayerIds: this.connectedIds(),
+        now,
+      },
+      previous,
+    );
   }
 
   /**
@@ -233,26 +208,22 @@ export class CoperoRoom extends Server<Env> {
    * throw here would trip onMessage's catch-all and roll the room back.
    */
   private publishDirectory() {
-    let entry: DirectoryEntry | null = null;
+    let decision;
     try {
-      entry = this.listingFor();
+      decision = this.directoryAt(Date.now());
     } catch (e) {
       console.error("directory: could not build listing:", e);
       return;
     }
-    const key = listingKey(entry);
-    const now = Date.now();
-    // Nothing visible changed, and the entry is not close to going stale.
-    if (key === this.lastListing && (entry === null || now - this.lastListingAt < TOUCH_MS)) return;
-    this.lastListing = key;
-    this.lastListingAt = now;
+    this.directoryState = decision.state;
+    if (decision.publication === undefined) return;
 
     const ns = this.env.CoperoDirectory;
     const stub = ns.get(ns.idFromName(DIRECTORY_ID));
     this.ctx.waitUntil(
-      stub.publish(this.name, entry).catch((e: unknown) => {
+      stub.publish(this.name, decision.publication).catch((e: unknown) => {
         console.error("directory: publish failed:", e);
-        this.lastListing = null; // retry on the next change
+        this.directoryState = null; // retry on the next change
       }),
     );
   }
@@ -267,11 +238,10 @@ export class CoperoRoom extends Server<Env> {
     if (url.pathname !== PROBE_PATH || request.headers.get(PROBE_HEADER) !== PROBE_TOKEN) {
       return new Response("Not found", { status: 404 });
     }
-    const entry = this.listingFor();
+    const decision = this.directoryAt(Date.now(), null);
     // The reply is itself a publish — the directory re-stamps from it.
-    this.lastListing = listingKey(entry);
-    this.lastListingAt = Date.now();
-    return Response.json({ entry });
+    this.directoryState = decision.state;
+    return Response.json({ entry: decision.entry });
   }
 
   private connectedIds(): Set<string> {

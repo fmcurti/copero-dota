@@ -1,19 +1,15 @@
 import { useNavigate } from "react-router-dom";
-import { liveGames } from "../../mp/directory";
+import { directoryView } from "../../mp/directory";
 import { RoomRow } from "./RoomRow";
-import { watchOnly } from "./useRoom";
 import { useRooms } from "./useRooms";
 
 export default function Watch() {
   const navigate = useNavigate();
   const { rooms, now, loaded, error } = useRooms();
-  const live = liveGames(rooms, now());
+  const live = directoryView(rooms, now()).liveGames;
 
   const watch = (code: string) => {
-    // Claim a viewer's seat-less connection before the room page mounts —
-    // useRoom reads this once, when it opens the socket.
-    watchOnly(code);
-    navigate(`/mp/${code}`);
+    navigate(`/mp/${code}?spectator=1`);
   };
 
   return (

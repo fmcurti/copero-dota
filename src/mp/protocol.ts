@@ -1,5 +1,13 @@
-import type { CardMode, GameFormat, HeroAlloc, SimTeam, TeamStrength } from "../game/types";
-import type { Action, CardRef, DraftMode, EngineState } from "./engine";
+import type { DrawnPack, Slots } from "../game/draft";
+import type {
+  CardMode,
+  GameFormat,
+  HeroAlloc,
+  RosterPlayer,
+  SimTeam,
+  TeamStrength,
+} from "../game/types";
+import type { Action, Board, CardRef, DeniedCard, DraftMode, EngineState } from "./engine";
 
 // ---------------------------------------------------------------------------
 // Versus wire contract. Everything in this game is public information (open
@@ -123,6 +131,9 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const isId = (value: unknown): value is number =>
   typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 
+const isFiniteNumber = (value: unknown): value is number =>
+  typeof value === "number" && Number.isFinite(value);
+
 function parseCardRef(value: unknown): CardRef | null {
   if (!isRecord(value)) return null;
   if (value.kind === "player" && isId(value.steamId)) {
@@ -224,6 +235,235 @@ export function parseClientMsg(value: unknown): ClientMsg | null {
 export type ServerMsg =
   | { t: "snapshot"; room: RoomSnapshot }
   | { t: "error"; code: string; msg: string; fatal?: boolean };
+
+const isPhase = (value: unknown): value is Phase =>
+  value === "lobby" ||
+  value === "drafting" ||
+  value === "assembled" ||
+  value === "broadcasting" ||
+  value === "done";
+
+const isConfig = (value: unknown): value is MpConfig => {
+  if (!isRecord(value)) return false;
+  return (
+    (value.format === "standard" || value.format === "valve_legacy") &&
+    (value.cardMode === "career" || value.cardMode === "peak" || value.cardMode === "event") &&
+    (value.heroAlloc === "auto" || value.heroAlloc === "manual") &&
+    (value.draftMode === "classic" || value.draftMode === "turbo") &&
+    (value.timerSecs === 7 || value.timerSecs === 15 || value.timerSecs === 25 || value.timerSecs === null) &&
+    (value.mulligans === 0 || value.mulligans === 1 || value.mulligans === 2) &&
+    (value.visibility === "private" || value.visibility === "spectatable" || value.visibility === "public")
+  );
+};
+
+const isSeat = (value: unknown): value is Seat =>
+  isRecord(value) &&
+  typeof value.playerId === "string" &&
+  typeof value.name === "string" &&
+  typeof value.connected === "boolean" &&
+  typeof value.isHost === "boolean";
+
+const isRosterPlayer = (value: unknown): value is RosterPlayer =>
+  isRecord(value) &&
+  isId(value.steamId) &&
+  typeof value.nickname === "string" &&
+  (value.role === "safelane" ||
+    value.role === "mid" ||
+    value.role === "offlane" ||
+    value.role === "support") &&
+  isFiniteNumber(value.ovr) &&
+  isFiniteNumber(value.impact) &&
+  isFiniteNumber(value.economy) &&
+  isFiniteNumber(value.reliability) &&
+  isId(value.games) &&
+  typeof value.team === "string" &&
+  (typeof value.eventId === "string" || value.eventId === null);
+
+const isDrawnPack = (value: unknown): value is DrawnPack =>
+  isRecord(value) &&
+  typeof value.id === "string" &&
+  typeof value.teamName === "string" &&
+  typeof value.eventId === "string" &&
+  (value.placement === null || isId(value.placement)) &&
+  Array.isArray(value.players) &&
+  value.players.every(isRosterPlayer) &&
+  Array.isArray(value.heroes) &&
+  value.heroes.every(isId);
+
+const isSlots = (value: unknown): value is Slots =>
+  isRecord(value) &&
+  ["safelane", "mid", "offlane", "support1", "support2"].every(
+    (slot) => value[slot] === null || isRosterPlayer(value[slot]),
+  );
+
+const isBoard = (value: unknown): value is Board =>
+  isRecord(value) &&
+  isSlots(value.slots) &&
+  Array.isArray(value.heroes) &&
+  value.heroes.every(isId);
+
+const isDeniedCard = (value: unknown): value is DeniedCard =>
+  isRecord(value) &&
+  ((value.kind === "player" && isRosterPlayer(value.player)) ||
+    (value.kind === "hero" && isId(value.heroId)));
+
+function isDraftPublic(value: unknown): value is DraftPublic {
+  if (!isRecord(value)) return false;
+  if (value.mode !== "classic" && value.mode !== "turbo") return false;
+  if (!isId(value.packSeq) || !isId(value.roundSeq) || !isId(value.openerSeat)) return false;
+  if (value.turnSeat !== null && !isId(value.turnSeat)) return false;
+  if (value.turnDeadline !== null && !isId(value.turnDeadline)) return false;
+  if (
+    value.turnDeadlines !== null &&
+    (!Array.isArray(value.turnDeadlines) ||
+      !value.turnDeadlines.every((deadline) => deadline === null || isId(deadline)))
+  )
+    return false;
+  if (!Array.isArray(value.currentPacks) || !value.currentPacks.every(isDrawnPack)) return false;
+  if (!Array.isArray(value.packDealtTo) || !value.packDealtTo.every(isId)) return false;
+  if (!Array.isArray(value.packPassCount) || !value.packPassCount.every(isId)) return false;
+  if (!Array.isArray(value.boards) || !value.boards.every(isBoard)) return false;
+  if (!Array.isArray(value.takenSteamIds) || !value.takenSteamIds.every(isId)) return false;
+  if (
+    !Array.isArray(value.deniedShelf) ||
+    !value.deniedShelf.every(
+      (entry) =>
+        isRecord(entry) &&
+        isDeniedCard(entry.card) &&
+        isId(entry.bySeat) &&
+        isId(entry.packSeq),
+    )
+  )
+    return false;
+  if (!Array.isArray(value.mulligansLeft) || !value.mulligansLeft.every(isId)) return false;
+  if (!Array.isArray(value.deniesLeft) || !value.deniesLeft.every(isId)) return false;
+
+  const seats = value.boards.length;
+  if (seats === 0 || value.openerSeat >= seats) return false;
+  if (value.turnSeat !== null && value.turnSeat >= seats) return false;
+  if (value.mulligansLeft.length !== seats || value.deniesLeft.length !== seats) return false;
+  if (value.turnDeadlines !== null && value.turnDeadlines.length !== seats) return false;
+  if (
+    value.mode === "turbo" &&
+    (value.packDealtTo.length !== value.currentPacks.length ||
+      value.packPassCount.length !== value.currentPacks.length ||
+      value.packDealtTo.some((seat) => seat >= seats))
+  )
+    return false;
+  return true;
+}
+
+const isTeamStrength = (value: unknown): value is TeamStrength =>
+  isRecord(value) &&
+  isFiniteNumber(value.overall) &&
+  isFiniteNumber(value.base) &&
+  isFiniteNumber(value.heroBonus) &&
+  isFiniteNumber(value.chemBonus) &&
+  Array.isArray(value.assignment) &&
+  value.assignment.every(
+    (entry) =>
+      isRecord(entry) &&
+      (entry.heroId === null || isId(entry.heroId)) &&
+      isId(entry.games),
+  ) &&
+  Array.isArray(value.chemEdges) &&
+  value.chemEdges.every(
+    (edge) =>
+      isRecord(edge) &&
+      isId(edge.i) &&
+      isId(edge.j) &&
+      isId(edge.games) &&
+      isFiniteNumber(edge.bonus),
+  ) &&
+  Array.isArray(value.chemTop) &&
+  value.chemTop.every(
+    (group) =>
+      isRecord(group) &&
+      Array.isArray(group.names) &&
+      group.names.every((name) => typeof name === "string") &&
+      isId(group.games) &&
+      isFiniteNumber(group.bonus),
+  );
+
+const isHeroAssignment = (value: unknown): value is Record<string, number> =>
+  isRecord(value) && Object.values(value).every(isId);
+
+const isSimTeam = (value: unknown): value is SimTeam =>
+  isRecord(value) &&
+  typeof value.id === "string" &&
+  typeof value.name === "string" &&
+  isFiniteNumber(value.strength) &&
+  typeof value.isUser === "boolean" &&
+  (typeof value.ownerId === "string" || value.ownerId === null) &&
+  (value.luck === undefined ||
+    (isRecord(value.luck) &&
+      isFiniteNumber(value.luck.chance) &&
+      value.luck.chance >= 0 &&
+      value.luck.chance <= 1 &&
+      typeof value.luck.label === "string"));
+
+function isRoomSnapshot(value: unknown): value is RoomSnapshot {
+  if (!isRecord(value)) return false;
+  if (!isPhase(value.phase) || !isConfig(value.config)) return false;
+  if (!Array.isArray(value.seats) || !value.seats.every(isSeat)) return false;
+  if (value.draft !== null && !isDraftPublic(value.draft)) return false;
+  if (
+    value.strengths !== null &&
+    (!Array.isArray(value.strengths) || !value.strengths.every(isTeamStrength))
+  )
+    return false;
+  if (
+    value.heroAssignments !== null &&
+    (!Array.isArray(value.heroAssignments) || !value.heroAssignments.every(isHeroAssignment))
+  )
+    return false;
+  if (
+    value.field !== null &&
+    (!Array.isArray(value.field) || value.field.length !== 18 || !value.field.every(isSimTeam))
+  )
+    return false;
+  if (value.simSeed !== null && !isId(value.simSeed)) return false;
+  if (
+    value.beat !== null &&
+    (!isRecord(value.beat) ||
+      !isId(value.beat.idx) ||
+      typeof value.beat.playing !== "boolean" ||
+      (value.beat.count !== undefined && !isId(value.beat.count)))
+  )
+    return false;
+  if (
+    value.taunt !== undefined &&
+    value.taunt !== null &&
+    (!isRecord(value.taunt) ||
+      typeof value.taunt.ownerId !== "string" ||
+      typeof value.taunt.phrase !== "string")
+  )
+    return false;
+  if (value.draft !== null && value.draft.boards.length !== value.seats.length) return false;
+  if (value.strengths !== null && value.strengths.length !== value.seats.length) return false;
+  if (
+    value.heroAssignments !== null &&
+    value.heroAssignments.length !== value.seats.length
+  )
+    return false;
+  return true;
+}
+
+/** Validate an untrusted decoded server frame at the protocol seam. */
+export function parseServerMsg(value: unknown): ServerMsg | null {
+  if (!isRecord(value)) return null;
+  if (value.t === "snapshot") {
+    return isRoomSnapshot(value.room) ? { t: "snapshot", room: value.room } : null;
+  }
+  if (value.t === "error") {
+    return typeof value.code === "string" &&
+      typeof value.msg === "string" &&
+      (value.fatal === undefined || typeof value.fatal === "boolean")
+      ? { t: "error", code: value.code, msg: value.msg, ...(value.fatal ? { fatal: true } : {}) }
+      : null;
+  }
+  return null;
+}
 
 export const NAME_MAX = 30;
 export const DEFAULT_NAME = "Sin Nombre";

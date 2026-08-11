@@ -1,10 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import {
-  DIRECTORY_TICK_MS,
-  isFresh,
-  overflowCodes,
-  probeCodes,
-  staleCodes,
+  directoryView,
   type DirectoryEntry,
   type RoomListing,
 } from "../src/mp/directory";
@@ -44,12 +40,24 @@ export class CoperoDirectory extends DurableObject<ProbeEnv> {
     await this.ctx.storage.put(key(next.code), next);
   }
 
+  /** Keep the Directory's alarm aligned with whether any listing remains. */
+  private async reconcileAlarm(all: Map<string, RoomListing>, now: number) {
+    const next = directoryView([...all.values()], now).nextTickAt;
+    const current = await this.ctx.storage.getAlarm();
+    if (next == null) {
+      if (current != null) await this.ctx.storage.deleteAlarm();
+    } else if (current == null) {
+      await this.ctx.storage.setAlarm(next);
+    }
+  }
+
   /** A room announces itself, or retracts with null. */
   async publish(code: string, entry: DirectoryEntry | null): Promise<void> {
     const all = await this.entries();
     const prev = all.get(code);
     if (!entry) {
       if (prev) await this.drop(code, all);
+      await this.reconcileAlarm(all, Date.now());
       return;
     }
     // Publishes are fire-and-forget, so they can land out of order: without
@@ -57,17 +65,18 @@ export class CoperoDirectory extends DurableObject<ProbeEnv> {
     // sit on the home page advertised as joinable.
     if (prev && prev.rev > entry.rev) return;
     await this.upsert({ ...entry, code }, all);
-    for (const victim of overflowCodes([...all.values()])) await this.drop(victim, all);
-    if ((await this.ctx.storage.getAlarm()) === null) {
-      await this.ctx.storage.setAlarm(Date.now() + DIRECTORY_TICK_MS);
+    const now = Date.now();
+    for (const victim of directoryView([...all.values()], now).overflowCodes) {
+      await this.drop(victim, all);
     }
+    await this.reconcileAlarm(all, now);
   }
 
   /** Everything the SPA needs. Bucketing happens client-side, from src/mp/directory. */
   async list(): Promise<{ now: number; rooms: RoomListing[] }> {
     const now = Date.now();
     const all = await this.entries();
-    return { now, rooms: [...all.values()].filter((l) => isFresh(l, now)) };
+    return { now, rooms: directoryView([...all.values()], now).rooms };
   }
 
   /**
@@ -79,9 +88,11 @@ export class CoperoDirectory extends DurableObject<ProbeEnv> {
   async alarm(): Promise<void> {
     const all = await this.entries();
     const now = Date.now();
-    for (const code of staleCodes([...all.values()], now)) await this.drop(code, all);
-    await Promise.all(probeCodes([...all.values()], now).map((c) => this.probe(c, all)));
-    if (all.size > 0) await this.ctx.storage.setAlarm(Date.now() + DIRECTORY_TICK_MS);
+    const view = directoryView([...all.values()], now);
+    for (const code of view.staleCodes) await this.drop(code, all);
+    await Promise.all(view.probeCodes.map((code) => this.probe(code, all)));
+    const next = directoryView([...all.values()], Date.now()).nextTickAt;
+    if (next != null) await this.ctx.storage.setAlarm(next);
   }
 
   private async probe(code: string, all: Map<string, RoomListing>) {

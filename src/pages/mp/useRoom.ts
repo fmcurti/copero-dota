@@ -1,20 +1,17 @@
 import usePartySocket from "partysocket/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ClientMsg, RoomSnapshot, ServerMsg } from "../../mp/protocol";
+import { useRunStore } from "../../game/store";
+import {
+  RoomClientHost,
+  type RoomClientOutcome,
+  type RoomClientSession,
+} from "../../mp/clientRoom";
+import type { ClientMsg } from "../../mp/protocol";
 
 const PLAYER_ID_KEY = "copero-player-id";
-const spectatorKey = (code: string) => `copero-mp-spectator:${code}`;
-
-/**
- * Arrive as a viewer instead of taking a seat. Must be set BEFORE the room
- * page mounts — useRoom reads it once, when it opens the socket.
- */
-export function watchOnly(code: string) {
-  localStorage.setItem(spectatorKey(code), "1");
-}
 
 /** Stable per-browser identity — survives reloads, powers reconnects. */
-export function getPlayerId(): string {
+function getPlayerId(): string {
   let id = localStorage.getItem(PLAYER_ID_KEY);
   if (!id) {
     id = crypto.randomUUID();
@@ -23,67 +20,125 @@ export function getPlayerId(): string {
   return id;
 }
 
-export function useRoom(code: string, name: string) {
+/** React/WebSocket adapter for the deep client-side Room host. */
+export function useRoomHost(code: string, name: string, preferSpectator: boolean) {
   const [playerId] = useState(getPlayerId);
-  const [snapshot, setSnapshot] = useState<RoomSnapshot | null>(null);
-  const [lastError, setLastError] = useState<string | null>(null);
-  const [fatalError, setFatalError] = useState<string | null>(null);
-  // Freeze the name at mount so typing elsewhere never churns the socket.
+  const [session, setSession] = useState<RoomClientSession | null>(null);
+  const [problemState, setProblemState] = useState<{
+    code: string;
+    problem: Extract<RoomClientOutcome, { kind: "problem" }>["problem"];
+  } | null>(null);
+  const [stinger, setStinger] = useState(false);
+  const winPhrases = useRunStore((state) => state.winPhrases);
+  const recordRun = useRunStore((state) => state.recordRun);
+
+  const sendRawRef = useRef<(frame: string) => void>(() => {});
+  const recordRunRef = useRef(recordRun);
+  const phrasesKeyRef = useRef(winPhrases.join("\n"));
+  recordRunRef.current = recordRun;
+  phrasesKeyRef.current = winPhrases.join("\n");
+
+  const hostRef = useRef<{ code: string; host: RoomClientHost } | null>(null);
+  if (!hostRef.current || hostRef.current.code !== code) {
+    hostRef.current = {
+      code,
+      host: new RoomClientHost(code, playerId, {
+        sendRaw: (frame) => sendRawRef.current(frame),
+        storage: localStorage,
+        recordRun: (record) => recordRunRef.current(record),
+        showStinger: () => setStinger(true),
+        phrasesKey: () => phrasesKeyRef.current,
+        now: Date.now,
+      }),
+    };
+  }
+  const host = hostRef.current.host;
+
   const nameRef = useRef(name);
+  const preferSpectatorRef = useRef(preferSpectator);
+  const arrivalCodeRef = useRef(code);
+  if (arrivalCodeRef.current !== code) {
+    arrivalCodeRef.current = code;
+    nameRef.current = name;
+    preferSpectatorRef.current = preferSpectator;
+  }
   const query = useMemo(
-    () => () => ({
-      playerId,
-      name: nameRef.current,
-      spectator: localStorage.getItem(spectatorKey(code)) === "1" ? "1" : null,
-    }),
-    [code, playerId],
+    () => () => {
+      const outcome = host.dispatch({
+        type: "connect",
+        preferSpectator: preferSpectatorRef.current,
+      });
+      preferSpectatorRef.current = false;
+      return {
+        playerId,
+        name: nameRef.current,
+        spectator: outcome.kind === "query" && outcome.spectator ? "1" : null,
+      };
+    },
+    [host, playerId],
   );
 
   const socket = usePartySocket({
     party: "copero-room",
     room: code,
     query,
-    onMessage(e) {
-      const m = JSON.parse(e.data as string) as ServerMsg;
-      if (m.t === "snapshot") setSnapshot(m.room);
-      else if (m.fatal) setFatalError(m.msg);
-      else setLastError(m.msg);
+    onMessage(event) {
+      const outcome = host.dispatch({ type: "frame", raw: event.data as string });
+      if (outcome.kind === "session") {
+        setSession(outcome.session);
+        setProblemState(null);
+      } else if (outcome.kind === "problem") {
+        setProblemState({ code, problem: outcome.problem });
+      }
     },
   });
+  sendRawRef.current = (frame) => socket.send(frame);
 
-  // Bumps on every (re)connect — lets effects re-sync state the server may
-  // have never received (e.g. win phrases sent to a worker that restarted).
-  const [opens, setOpens] = useState(0);
   useEffect(() => {
-    const onOpen = () => setOpens((n) => n + 1);
+    const onOpen = () => host.dispatch({ type: "open" });
     socket.addEventListener("open", onOpen);
     return () => socket.removeEventListener("open", onOpen);
-  }, [socket]);
+  }, [host, socket]);
 
   useEffect(() => {
-    if (!lastError) return;
-    const t = setTimeout(() => setLastError(null), 3500);
-    return () => clearTimeout(t);
-  }, [lastError]);
+    host.dispatch({ type: "phrasesChanged" });
+  }, [host, winPhrases]);
 
-  const send = useCallback((m: ClientMsg) => socket.send(JSON.stringify(m)), [socket]);
-  const spectate = useCallback(() => {
-    localStorage.setItem(spectatorKey(code), "1");
-    socket.send(JSON.stringify({ t: "spectate" } satisfies ClientMsg));
-  }, [code, socket]);
-  const takeSeat = useCallback(() => {
-    localStorage.removeItem(spectatorKey(code));
-    socket.send(JSON.stringify({ t: "takeSeat" } satisfies ClientMsg));
-  }, [code, socket]);
-  return { playerId, snapshot, send, spectate, takeSeat, lastError, fatalError, opens };
+  useEffect(() => {
+    const problem = problemState?.code === code ? problemState.problem : null;
+    if (!problem || problem.fatal) return;
+    const timer = setTimeout(() => setProblemState(null), 3500);
+    return () => clearTimeout(timer);
+  }, [code, problemState]);
+
+  useEffect(() => setStinger(false), [code]);
+
+  const send = useCallback(
+    (message: ClientMsg) => host.dispatch({ type: "message", message }),
+    [host],
+  );
+  const spectate = useCallback(() => host.dispatch({ type: "spectate" }), [host]);
+  const takeSeat = useCallback(() => host.dispatch({ type: "takeSeat" }), [host]);
+  const dismissStinger = useCallback(() => setStinger(false), []);
+  const actions = useMemo(
+    () => ({ send, spectate, takeSeat, dismissStinger }),
+    [send, spectate, takeSeat, dismissStinger],
+  );
+
+  return {
+    session: session?.code === code ? session : null,
+    problem: problemState?.code === code ? problemState.problem : null,
+    stinger,
+    actions,
+  };
 }
 
 /** Re-renders on an interval — for countdowns. */
 export function useNow(ms: number): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), ms);
-    return () => clearInterval(t);
+    const timer = setInterval(() => setNow(Date.now()), ms);
+    return () => clearInterval(timer);
   }, [ms]);
   return now;
 }

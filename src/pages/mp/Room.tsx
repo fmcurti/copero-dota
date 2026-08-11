@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Broadcast } from "../../components/Broadcast";
 import { DraftRecap } from "../../components/DraftRecap";
@@ -8,7 +8,6 @@ import { ovrColor } from "../../components/cards";
 import { Stinger } from "../../components/Stinger";
 import { useBundle, useHeroById } from "../../game/data";
 import { SLOT_IDS } from "../../game/draft";
-import { simulateTournament } from "../../game/sim";
 import { useRunStore } from "../../game/store";
 import type { Hero, SimResult } from "../../game/types";
 import {
@@ -24,77 +23,29 @@ import {
   type Seat,
 } from "../../mp/protocol";
 import { nameTaken } from "../../mp/seating";
-import {
-  deriveRoomView,
-  roomCues,
-  type ClientFacts,
-  type RoomView,
-} from "../../mp/roomView";
+import type { RoomView } from "../../mp/roomView";
 import { WinPhrasesEditor } from "../../components/WinPhrases";
 import { DraftView } from "./DraftView";
-import { useRoom, watchOnly } from "./useRoom";
+import { useRoomHost } from "./useRoom";
 
 export default function Room() {
   const { code = "" } = useParams();
   const [searchParams] = useSearchParams();
-  // Shared watch links (/mp/CODE?spectator=1) must not take a seat. This has
-  // to run before useRoom opens the socket — that is when the flag is read,
-  // hence a lazy initializer instead of an effect.
-  useState(() => {
-    if (searchParams.get("spectator") === "1") watchOnly(code);
-  });
   const teamName = useRunStore((s) => s.teamName);
-  const { playerId, snapshot, send, spectate, takeSeat, lastError, fatalError, opens } = useRoom(
+  const { session, problem, stinger, actions } = useRoomHost(
     code,
     teamName || "Your Team",
+    searchParams.get("spectator") === "1",
   );
   const { bundle, error } = useBundle();
   const heroById = useHeroById(bundle);
 
-  const [stinger, setStinger] = useState(false);
-  const winPhrases = useRunStore((s) => s.winPhrases);
-  const recordRun = useRunStore((s) => s.recordRun);
-  const phrasesKey = winPhrases.join("\n");
-
-  // Clients re-run the sim locally; the server only paces the reveal.
-  const result = useMemo(
-    () =>
-      snapshot?.field && snapshot.simSeed != null
-        ? simulateTournament(snapshot.field, snapshot.simSeed)
-        : null,
-    [snapshot?.field, snapshot?.simSeed],
-  );
-  const view = useMemo(
-    () => (snapshot ? deriveRoomView(snapshot, playerId, result) : null),
-    [snapshot, playerId, result],
-  );
-
-  // What should happen is decided purely (src/mp/roomView.ts); this effect
-  // just executes the cues through the page's adapters. `opens` re-fires it
-  // after reconnects; partysocket buffers sends while connecting, so firing
-  // "early" is always safe. Run records dedupe on a localStorage key, so
-  // re-emitting them is harmless.
-  const prevFacts = useRef<ClientFacts | null>(null);
-  useEffect(() => {
-    const facts: ClientFacts = { snapshot, result, playerId, code, opens, phrasesKey };
-    const cues = roomCues(prevFacts.current, facts, Date.now());
-    prevFacts.current = facts;
-    for (const cue of cues) {
-      if (cue.kind === "stinger") setStinger(true);
-      else if (cue.kind === "syncPhrases") send({ t: "phrases", phrases: cue.phrases });
-      else if (!localStorage.getItem(cue.dedupeKey)) {
-        localStorage.setItem(cue.dedupeKey, "1");
-        recordRun(cue.record);
-      }
-    }
-  }, [snapshot, result, playerId, code, opens, phrasesKey, send, recordRun]);
-
-  if (fatalError) {
+  if (problem?.fatal) {
     return (
       <div className="mx-auto max-w-md text-center">
         <div className="plate-rules py-6">
           <div className="plate text-2xl font-bold text-bone">Room {code}</div>
-          <p className="mt-2 text-sm text-slate-mid">{fatalError}</p>
+          <p className="mt-2 text-sm text-slate-mid">{problem.message}</p>
         </div>
         <Link
           to="/"
@@ -106,10 +57,12 @@ export default function Room() {
     );
   }
   if (error) return <div className="text-dire">Failed to load data: {error}</div>;
-  if (!snapshot || !bundle || !view) {
+  if (!session || !bundle) {
     return <div className="text-center text-slate-dim">Conectando a la sala {code}…</div>;
   }
 
+  const { playerId, snapshot, result, view } = session;
+  const { send, spectate, takeSeat, dismissStinger } = actions;
   const { mySeat, isHost, isSpectator } = view;
 
   return (
@@ -123,12 +76,12 @@ export default function Room() {
               ? "packs en cadena · todos pickean a la vez"
               : "packs compartidos · players exclusivos"
           }
-          onDone={() => setStinger(false)}
+          onDone={dismissStinger}
         />
       )}
-      {lastError && (
+      {problem && (
         <div className="mb-4 rounded-lg border border-dire/50 bg-ink-900/70 px-4 py-2 text-sm text-dire">
-          {lastError}
+          {problem.message}
         </div>
       )}
       {isSpectator && snapshot.phase !== "lobby" && (

@@ -3,11 +3,11 @@ import type { OwnerStats, RunRecord, SimResult } from "../game/types";
 import type { RoomSnapshot, Seat } from "./protocol";
 
 // ---------------------------------------------------------------------------
-// The Room view module: everything the Room page decides that is not
+// The Room view module: everything the Room client decides that is not
 // rendering. `deriveRoomView` answers "what does this snapshot mean to this
 // player"; the cue functions answer "what should happen now that the facts
-// changed". Both are pure — the page executes cues through its adapters
-// (socket, announcer, localStorage, run history) and renders the view.
+// changed". Both are pure — the Room client host executes cues through its
+// adapters, while the Room page renders the view.
 // ---------------------------------------------------------------------------
 
 export interface HumanStanding {

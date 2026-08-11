@@ -1,22 +1,27 @@
 import { describe, expect, it } from "vitest";
-import {
-  LISTING_TTL_MS,
-  MAX_LISTINGS,
-  MAX_PROBES_PER_TICK,
-  PROBE_AFTER_MS,
-  isFresh,
-  isJoinable,
-  isWatchable,
-  listingKey,
-  liveGames,
-  openLobbies,
-  overflowCodes,
-  probeCodes,
-  staleCodes,
-  type RoomListing,
-} from "./directory";
+import { directoryView, roomDirectory, type RoomListing } from "./directory";
+import type { Seat } from "./protocol";
 
 const NOW = 1_700_000_000_000;
+
+const seat = (playerId: string, name: string, isHost = false): Seat => ({
+  playerId,
+  name,
+  connected: true,
+  isHost,
+});
+
+function room(over: Partial<Parameters<typeof roomDirectory>[0]> = {}) {
+  return {
+    code: "AAAAA",
+    visibility: "public" as const,
+    phase: "lobby" as const,
+    seats: [seat("a", "Alpha", true), seat("b", "Bravo")],
+    connectedPlayerIds: ["a", "b"],
+    now: NOW,
+    ...over,
+  };
+}
 
 function listing(over: Partial<RoomListing> = {}): RoomListing {
   return {
@@ -25,8 +30,8 @@ function listing(over: Partial<RoomListing> = {}): RoomListing {
     phase: "lobby",
     seats: 2,
     maxSeats: 8,
-    host: "Host",
-    teams: ["Host", "Other"],
+    host: "Alpha",
+    teams: ["Alpha", "Bravo"],
     watchers: 0,
     rev: NOW,
     updatedAt: NOW,
@@ -34,135 +39,106 @@ function listing(over: Partial<RoomListing> = {}): RoomListing {
   };
 }
 
-describe("which list an entry lands on", () => {
-  it("puts an open public lobby on the home page and nowhere else", () => {
-    const l = listing();
-    expect(isJoinable(l)).toBe(true);
-    expect(isWatchable(l)).toBe(false);
+describe("Room publication", () => {
+  it("never exposes private, finished, empty, or spectatable-lobby Rooms", () => {
+    expect(roomDirectory(room({ visibility: "private" }), null).entry).toBeNull();
+    expect(roomDirectory(room({ phase: "done" }), null).entry).toBeNull();
+    expect(roomDirectory(room({ connectedPlayerIds: [] }), null).entry).toBeNull();
+    expect(roomDirectory(room({ visibility: "spectatable" }), null).entry).toBeNull();
   });
 
-  it("never shows a spectatable room while it is still filling up", () => {
-    const l = listing({ visibility: "spectatable" });
-    expect(isJoinable(l)).toBe(false);
-    expect(isWatchable(l)).toBe(false);
-  });
-
-  it("moves both public and spectatable rooms to the watch list once they start", () => {
-    for (const visibility of ["public", "spectatable"] as const) {
-      for (const phase of ["drafting", "assembled", "broadcasting"] as const) {
-        const l = listing({ visibility, phase });
-        expect(isWatchable(l)).toBe(true);
-        expect(isJoinable(l)).toBe(false);
-      }
-    }
-  });
-
-  it("drops a full public lobby from the joinable list", () => {
-    expect(isJoinable(listing({ seats: 8, maxSeats: 8 }))).toBe(false);
-    expect(isJoinable(listing({ seats: 7, maxSeats: 8 }))).toBe(true);
-  });
-
-  it("shows a finished room nowhere", () => {
-    const l = listing({ phase: "done" });
-    expect(isJoinable(l)).toBe(false);
-    expect(isWatchable(l)).toBe(false);
-  });
-});
-
-describe("freshness", () => {
-  it("rots exactly at the TTL", () => {
-    const l = listing();
-    expect(isFresh(l, NOW + LISTING_TTL_MS - 1)).toBe(true);
-    expect(isFresh(l, NOW + LISTING_TTL_MS)).toBe(false);
-  });
-
-  it("hides rotted entries from both lists even when they otherwise qualify", () => {
-    const old = listing({ code: "OLD", updatedAt: NOW - LISTING_TTL_MS });
-    const live = listing({ code: "NEW" });
-    expect(openLobbies([old, live], NOW).map((l) => l.code)).toEqual(["NEW"]);
-    expect(staleCodes([old, live], NOW)).toEqual(["OLD"]);
-  });
-});
-
-describe("sorting", () => {
-  it("orders open lobbies by fullest first, then newest, then code", () => {
-    const rooms = [
-      listing({ code: "CCCCC", seats: 2 }),
-      listing({ code: "AAAAA", seats: 5 }),
-      listing({ code: "BBBBB", seats: 2, rev: NOW + 1 }),
-    ];
-    expect(openLobbies(rooms, NOW).map((l) => l.code)).toEqual(["AAAAA", "BBBBB", "CCCCC"]);
-  });
-
-  it("orders live games by phase, then by crowd", () => {
-    const rooms = [
-      listing({ code: "BCAST", phase: "broadcasting" }),
-      listing({ code: "DRAFT", phase: "drafting" }),
-      listing({ code: "ASSEM", phase: "assembled", watchers: 9 }),
-    ];
-    expect(liveGames(rooms, NOW).map((l) => l.code)).toEqual(["DRAFT", "ASSEM", "BCAST"]);
-  });
-
-  it("is a total order — equal rows fall back to the code", () => {
-    const rooms = [listing({ code: "ZZZZZ" }), listing({ code: "AAAAA" })];
-    expect(openLobbies(rooms, NOW).map((l) => l.code)).toEqual(["AAAAA", "ZZZZZ"]);
-  });
-});
-
-describe("directory maintenance", () => {
-  it("probes the quietest entries first and caps the fan-out", () => {
-    const rooms = Array.from({ length: MAX_PROBES_PER_TICK + 5 }, (_, i) =>
-      listing({ code: `R${i}`, updatedAt: NOW - PROBE_AFTER_MS - i }),
+  it("projects a public Room and counts unique unseated visitors", () => {
+    const result = roomDirectory(
+      room({ connectedPlayerIds: ["a", "a", "b", "watcher-1", "watcher-1", "watcher-2"] }),
+      null,
     );
-    const codes = probeCodes(rooms, NOW);
-    expect(codes).toHaveLength(MAX_PROBES_PER_TICK);
-    // Oldest (largest i) first.
-    expect(codes[0]).toBe(`R${rooms.length - 1}`);
+    expect(result.entry).toEqual({
+      code: "AAAAA",
+      visibility: "public",
+      phase: "lobby",
+      seats: 2,
+      maxSeats: 8,
+      host: "Alpha",
+      teams: ["Alpha", "Bravo"],
+      watchers: 2,
+      rev: NOW,
+    });
+    expect(result.publication).toEqual(result.entry);
   });
 
-  it("leaves recently confirmed entries alone", () => {
-    const fresh = listing({ code: "FRESH", updatedAt: NOW - PROBE_AFTER_MS + 1 });
-    const quiet = listing({ code: "QUIET", updatedAt: NOW - PROBE_AFTER_MS });
-    expect(probeCodes([fresh, quiet], NOW)).toEqual(["QUIET"]);
+  it("exposes a spectatable Room only after its Draft starts", () => {
+    const result = roomDirectory(room({ visibility: "spectatable", phase: "drafting" }), null);
+    expect(result.entry).toMatchObject({ visibility: "spectatable", phase: "drafting" });
   });
 
-  it("never probes an entry that is already rotted — staleCodes takes it", () => {
-    const dead = listing({ code: "DEAD", updatedAt: NOW - LISTING_TTL_MS });
-    expect(probeCodes([dead], NOW)).toEqual([]);
-    expect(staleCodes([dead], NOW)).toEqual(["DEAD"]);
+  it("suppresses unchanged publications, touches visible Rooms, and retracts once", () => {
+    const first = roomDirectory(room(), null);
+    const unchanged = roomDirectory(room({ now: NOW + 60_000 }), first.state);
+    expect(unchanged.publication).toBeUndefined();
+    expect(unchanged.state).toBe(first.state);
+
+    const touched = roomDirectory(room({ now: NOW + 6 * 60_000 }), first.state);
+    expect(touched.publication).toEqual(touched.entry);
+
+    const hidden = roomDirectory(room({ visibility: "private", now: NOW + 1 }), first.state);
+    expect(hidden.publication).toBeNull();
+    const stillHidden = roomDirectory(room({ visibility: "private", now: NOW + 2 }), hidden.state);
+    expect(stillHidden.publication).toBeUndefined();
   });
 
-  it("evicts the least recently confirmed when over cap", () => {
-    const rooms = Array.from({ length: MAX_LISTINGS + 3 }, (_, i) =>
-      listing({ code: `R${i}`, updatedAt: NOW - i }),
+  it("publishes immediately when a visible fact changes", () => {
+    const first = roomDirectory(room(), null);
+    const changed = roomDirectory(
+      room({ seats: [seat("a", "Renamed", true), seat("b", "Bravo")], now: NOW + 1 }),
+      first.state,
     );
-    const victims = overflowCodes(rooms);
-    expect(victims).toHaveLength(3);
-    expect(victims).toEqual([`R${MAX_LISTINGS + 2}`, `R${MAX_LISTINGS + 1}`, `R${MAX_LISTINGS}`]);
-    expect(overflowCodes(rooms.slice(0, MAX_LISTINGS))).toEqual([]);
+    expect(changed.publication).toMatchObject({ host: "Renamed", teams: ["Renamed", "Bravo"] });
   });
 });
 
-describe("listingKey", () => {
-  it("ignores the clocks so an unchanged row costs no write", () => {
-    expect(listingKey(listing({ rev: 1 }))).toBe(listingKey(listing({ rev: 2 })));
+describe("Directory view", () => {
+  it("returns only fresh Rooms and buckets open lobbies and live games", () => {
+    const old = listing({ code: "OLD", updatedAt: NOW - 21 * 60_000 });
+    const open = listing({ code: "OPEN", seats: 5 });
+    const full = listing({ code: "FULL", seats: 8 });
+    const hiddenLobby = listing({ code: "SPEC", visibility: "spectatable" });
+    const draft = listing({ code: "DRAFT", visibility: "spectatable", phase: "drafting" });
+    const view = directoryView([old, open, full, hiddenLobby, draft], NOW);
+
+    expect(view.rooms.map((item) => item.code)).not.toContain("OLD");
+    expect(view.openLobbies.map((item) => item.code)).toEqual(["OPEN"]);
+    expect(view.liveGames.map((item) => item.code)).toEqual(["DRAFT"]);
+    expect(view.staleCodes).toEqual(["OLD"]);
   });
 
-  it("notices anything a viewer can actually see", () => {
-    const base = listing();
-    for (const change of [
-      { phase: "drafting" as const },
-      { seats: 3 },
-      { watchers: 1 },
-      { teams: ["Host", "Someone else"] },
-      { visibility: "spectatable" as const },
-      { host: "Other" },
-    ]) {
-      expect(listingKey({ ...base, ...change })).not.toBe(listingKey(base));
-    }
+  it("orders lobbies by fullness and live games by phase then crowd", () => {
+    const view = directoryView(
+      [
+        listing({ code: "CCCCC", seats: 2 }),
+        listing({ code: "AAAAA", seats: 5 }),
+        listing({ code: "BBBBB", seats: 2, rev: NOW + 1 }),
+        listing({ code: "BCAST", phase: "broadcasting" }),
+        listing({ code: "DRAFT", phase: "drafting" }),
+        listing({ code: "ASSEM", phase: "assembled", watchers: 9 }),
+      ],
+      NOW,
+    );
+    expect(view.openLobbies.map((item) => item.code)).toEqual(["AAAAA", "BBBBB", "CCCCC"]);
+    expect(view.liveGames.map((item) => item.code)).toEqual(["DRAFT", "ASSEM", "BCAST"]);
   });
 
-  it("has a distinct key for a retraction", () => {
-    expect(listingKey(null)).not.toBe(listingKey(listing()));
+  it("plans quiet probes, stale eviction, overflow, and the next tick", () => {
+    const many = Array.from({ length: 203 }, (_, index) =>
+      listing({
+        code: `R${index}`,
+        updatedAt: NOW - (index < 25 ? 7 * 60_000 + index : index),
+      }),
+    );
+    const view = directoryView(many, NOW);
+    expect(view.probeCodes).toHaveLength(20);
+    expect(view.probeCodes[0]).toBe("R24");
+    expect(view.overflowCodes).toEqual(["R24", "R23", "R22"]);
+    expect(view.nextTickAt).toBeGreaterThan(NOW);
+    expect(directoryView([], NOW).nextTickAt).toBeNull();
   });
 });

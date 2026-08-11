@@ -64,8 +64,12 @@ tests, and reviews all say the same thing.
   first (seat facts, the humans' final standings); **cues** answer the
   second — `roomCues` (stinger, win-phrase resync, run recording) and
   `draftCues` (the announcer's once-per-turn rule). All pure; the Room
-  page renders the view and executes cues through its adapters (socket,
-  announcer, localStorage, run history).
+  page renders the view; the Room client host executes its cues.
+- **Room client host** — the client-side Room lifecycle
+  (`src/mp/clientRoom.ts`). It validates server frames, derives the local Sim
+  and Room view, owns reconnect and spectator intent, and executes Room cues
+  through injected socket, localStorage, stinger, and run-history adapters.
+  `useRoomHost` (`src/pages/mp/useRoom.ts`) is its React/WebSocket adapter.
 - **Draft seed** — `RoomState.draftSeed`: every spread's pack RNG derives
   from it, so a draft replays exactly from `(seed, actions)`.
 - **Directory** — the public room listing. Policy is pure

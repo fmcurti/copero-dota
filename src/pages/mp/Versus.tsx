@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Section } from "../../components/options";
 import { useRunStore } from "../../game/store";
-import { liveGames, openLobbies } from "../../mp/directory";
+import { directoryView } from "../../mp/directory";
 import { makeRoomCode } from "../../mp/protocol";
 import { RoomRow } from "./RoomRow";
 import { useRooms } from "./useRooms";
@@ -12,8 +12,7 @@ export default function Versus() {
   const { teamName, setTeamName } = useRunStore();
   const [joinCode, setJoinCode] = useState("");
   const { rooms, now, loaded } = useRooms();
-  const open = openLobbies(rooms, now());
-  const live = liveGames(rooms, now());
+  const { openLobbies: open, liveGames: live } = directoryView(rooms, now());
 
   const join = () => {
     const code = joinCode.trim().toUpperCase();
