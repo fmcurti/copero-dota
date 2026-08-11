@@ -10,6 +10,13 @@ tests, and reviews all say the same thing.
   whole; discarded once everyone has acted on it.
 - **Spread** — the open packs on the table for one round: 1 pack for 2–4
   seats, 2 side-by-side for 5+. The opener may mulligan the whole spread.
+  Classic-mode only; turbo replaces it with the wave.
+- **Turbo / the chain** — the fast draft mode: every incomplete seat is dealt
+  its own pack (one **wave** per round) and everyone picks at once; a pack's
+  leftovers pass to the next seat, queueing in arrival order. A pack an
+  arriving seat cannot pick from passes through by itself (the skip rule); a
+  pack every seat has acted on is discarded; when the wave is gone the next
+  is dealt. Mulligan burns your freshly dealt pack for a replacement.
 - **Board** — one drafter's roster in progress: 5 role slots + 5 heroes.
 - **Deny** — burn your pick to destroy any card in the spread (1 per game).
   A denied player is gone for everyone; a denied hero only leaves its pack.

@@ -2,17 +2,21 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildCardPool } from "../game/cards";
-import { emptySlots, isComplete, SLOT_IDS } from "../game/draft";
-import { mulberry32 } from "../game/rng";
+import { emptySlots, isComplete, materialize, SLOT_IDS } from "../game/draft";
+import { mulberry32, type Rng } from "../game/rng";
 import { autopick } from "./autopick";
 import {
+  activePackIndex,
   applyAction,
   boardComplete,
   createDraft,
+  dealTurbo,
   legalActions,
   openSpread,
+  packHolder,
   packsPerSpread,
   type Board,
+  type CardRef,
   type EngineState,
 } from "./engine";
 import type { DataBundle, Pack, PackPlayer, Role } from "../game/types";
@@ -414,6 +418,237 @@ describe("full drafts", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Turbo — the booster chain
+// ---------------------------------------------------------------------------
+
+function turboDraft(seats: number, mulligans = 0): EngineState {
+  return createDraft(seats, { mulligans, mode: "turbo" });
+}
+
+/** Seats currently holding a pack they must act on. */
+function readySeats(s: EngineState): number[] {
+  return Array.from({ length: s.numSeats }, (_, i) => i).filter(
+    (seat) => activePackIndex(s, seat) >= 0,
+  );
+}
+
+/** Play a full turbo draft: whenever any seat holds a pack, the strategy acts. */
+function runTurboDraft(
+  s: EngineState,
+  pool: Pack[],
+  rng: Rng,
+  act: (s: EngineState, seat: number) => ReturnType<typeof applyAction>,
+): EngineState {
+  let guard = 0;
+  while (!s.done) {
+    if (++guard > 8000) throw new Error("draft did not terminate");
+    if (s.owedPacks.length || !s.currentPacks.length) {
+      s = dealTurbo(s, pool, rng);
+      continue;
+    }
+    const ready = readySeats(s);
+    if (!ready.length) throw new Error("chain stalled with packs in flight");
+    const seat = ready[Math.floor(rng() * ready.length)];
+    const r = act(s, seat);
+    if (r.error) throw new Error(`action failed: ${r.error}`);
+    s = r.state;
+  }
+  return s;
+}
+
+describe("turbo waves", () => {
+  it("deals one pack to every seat: everyone has a turn at once", () => {
+    const s = dealTurbo(turboDraft(4), makePool(), mulberry32(1));
+    expect(s.currentPacks).toHaveLength(4);
+    expect(s.packDealtTo).toEqual([0, 1, 2, 3]);
+    expect(s.packPassCount).toEqual([0, 0, 0, 0]);
+    expect(s.roundSeq).toBe(1);
+    expect(s.packSeq).toBe(4);
+    expect(s.turnSeat).toBeNull();
+    expect(readySeats(s)).toEqual([0, 1, 2, 3]);
+    // in-flight packs never share a player
+    const ids = s.currentPacks.flatMap((p) => p.players.map((x) => x.steamId));
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("seats act on the same state without waiting on each other", () => {
+    let s = dealTurbo(turboDraft(3), makePool(), mulberry32(2));
+    s = applyAction(s, 2, { type: "pick", card: legalActions(s, 2).picks[0] }).state;
+    expect(applyAction(s, 0, { type: "pick", card: legalActions(s, 0).picks[0] }).error)
+      .toBeUndefined();
+  });
+
+  it("acting passes the leftovers down the chain; arrivals queue behind the pack in hand", () => {
+    let s = dealTurbo(turboDraft(3), makePool(), mulberry32(3));
+    const passed = s.currentPacks[0].id;
+    const own = s.currentPacks[1].id;
+    s = applyAction(s, 0, { type: "pick", card: legalActions(s, 0).picks[0] }).state;
+    // seat 0's leftovers are now in seat 1's hands…
+    expect(s.currentPacks[0].id).toBe(passed);
+    expect(packHolder(s, 0)).toBe(1);
+    // …queued behind the pack seat 1 was dealt, which arrived first
+    expect(s.currentPacks[activePackIndex(s, 1)].id).toBe(own);
+    // seat 0 holds nothing until the chain comes around
+    expect(activePackIndex(s, 0)).toBe(-1);
+    expect(legalActions(s, 0).picks).toHaveLength(0);
+  });
+
+  it("a pack every seat has acted on is discarded; an empty table starts a new wave", () => {
+    let s = dealTurbo(turboDraft(2), makePool(), mulberry32(4));
+    for (let k = 0; k < 4; k++) {
+      const seat = readySeats(s)[0];
+      s = applyAction(s, seat, { type: "pick", card: legalActions(s, seat).picks[0] }).state;
+    }
+    expect(s.currentPacks).toHaveLength(0);
+    s = dealTurbo(s, makePool(), mulberry32(5));
+    expect(s.roundSeq).toBe(2);
+    expect(s.currentPacks).toHaveLength(2);
+  });
+
+  it("there is no manual pass in turbo", () => {
+    const s = dealTurbo(turboDraft(2), makePool(), mulberry32(6));
+    expect(legalActions(s, 0).canPass).toBe(false);
+    expect(applyAction(s, 0, { type: "pass" }).error).toBe("cannot-pass");
+  });
+});
+
+describe("turbo skip rule", () => {
+  /** Seat 1 with every role the pack offers filled and all five heroes drafted. */
+  function skipState(): EngineState {
+    const pack = makePack(1, ["safelane", "safelane", "safelane", "safelane", "safelane"], 10);
+    const s = turboDraft(3);
+    s.boards[1] = board(
+      {
+        safelane: makePlayer(9001, "safelane"),
+        offlane: makePlayer(9002, "offlane"),
+        support1: makePlayer(9003, "support"),
+        support2: makePlayer(9004, "support"),
+      },
+      [11, 12, 13, 14, 15], // heroes complete — exactly the pack's signature five
+    );
+    s.takenSteamIds = [9001, 9002, 9003, 9004];
+    s.currentPacks = [materialize(pack, mulberry32(7))];
+    s.packDealtTo = [0];
+    s.packPassCount = [0];
+    s.usedPackIds = [pack.id];
+    return s;
+  }
+
+  it("a pack with nothing for an arriving seat passes through by itself", () => {
+    let s = skipState();
+    const pick = legalActions(s, 0).picks.find((c) => c.kind === "player")!;
+    s = applyAction(s, 0, { type: "pick", card: pick }).state;
+    // seat 1 was skipped without acting: the pack sits with seat 2
+    expect(s.packPassCount[0]).toBe(2);
+    expect(packHolder(s, 0)).toBe(2);
+    expect(activePackIndex(s, 1)).toBe(-1);
+    expect(legalActions(s, 1).picks).toHaveLength(0);
+  });
+
+  it("…and is discarded once every seat has acted or been skipped", () => {
+    let s = skipState();
+    s = applyAction(s, 0, { type: "pick", card: legalActions(s, 0).picks[0] }).state;
+    s = applyAction(s, 2, { type: "pick", card: legalActions(s, 2).picks[0] }).state;
+    expect(s.currentPacks).toHaveLength(0);
+  });
+});
+
+describe("turbo deny and mulligan", () => {
+  it("deny burns your pick on the pack in your hands and sends the leftovers on", () => {
+    let s = dealTurbo(turboDraft(2), makePool(), mulberry32(8));
+    const victim = s.currentPacks[activePackIndex(s, 0)].players[0];
+    s = applyAction(s, 0, { type: "deny", card: { kind: "player", steamId: victim.steamId } }).state;
+    expect(s.deniesLeft[0]).toBe(0);
+    expect(s.takenSteamIds).toContain(victim.steamId);
+    expect(s.deniedShelf[0].bySeat).toBe(0);
+    // the deny consumed seat 0's act on that pack — it moved to seat 1
+    expect(packHolder(s, 0)).toBe(1);
+    expect(applyAction(s, 0, { type: "deny", card: { kind: "hero", heroId: 1 } }).error).toBe(
+      "no-pack",
+    );
+  });
+
+  it("mulligan burns only a freshly dealt pack; the replacement comes back to that seat", () => {
+    let s = dealTurbo(createDraft(2, { mulligans: 1, mode: "turbo" }), makePool(), mulberry32(9));
+    const burned = s.currentPacks[activePackIndex(s, 0)].id;
+    expect(legalActions(s, 0).canMulligan).toBe(true);
+    s = applyAction(s, 0, { type: "mulligan" }).state;
+    expect(s.mulligansLeft[0]).toBe(0);
+    expect(s.owedPacks).toEqual([0]);
+    expect(s.currentPacks.some((p) => p.id === burned)).toBe(false);
+    s = dealTurbo(s, makePool(), mulberry32(10));
+    expect(s.owedPacks).toEqual([]);
+    const replacement = activePackIndex(s, 0);
+    expect(replacement).toBeGreaterThanOrEqual(0);
+    expect(s.currentPacks[replacement].id).not.toBe(burned);
+    expect(s.packPassCount[replacement]).toBe(0);
+    expect(s.usedPackIds).toContain(burned);
+  });
+
+  it("a pack someone already acted on cannot be mulliganed", () => {
+    let s = dealTurbo(createDraft(2, { mulligans: 2, mode: "turbo" }), makePool(), mulberry32(11));
+    s = applyAction(s, 0, { type: "pick", card: legalActions(s, 0).picks[0] }).state;
+    s = applyAction(s, 1, { type: "pick", card: legalActions(s, 1).picks[0] }).state;
+    // seat 1's hand is now seat 0's leftovers — passed once already
+    expect(s.packPassCount[activePackIndex(s, 1)]).toBe(1);
+    expect(legalActions(s, 1).canMulligan).toBe(false);
+    expect(applyAction(s, 1, { type: "mulligan" }).error).toBe("illegal-mulligan");
+  });
+});
+
+describe("turbo full drafts", () => {
+  it("greedy chains complete with legal boards at every table size", () => {
+    for (const seats of [2, 3, 4, 5, 6, 8]) {
+      const rng = mulberry32(200 + seats);
+      const done = runTurboDraft(turboDraft(seats), makePool(160), rng, (st, seat) =>
+        applyAction(st, seat, { type: "pick", card: legalActions(st, seat).picks[0] }),
+      );
+      expectValidBoards(done);
+    }
+  });
+
+  it("fuzz: random turbo actions always terminate with legal boards (2-8 seats)", () => {
+    for (let iter = 0; iter < 60; iter++) {
+      const rng = mulberry32(iter * 13 + 3);
+      const seats = 2 + (iter % 7);
+      const done = runTurboDraft(
+        createDraft(seats, { mulligans: 2, mode: "turbo" }),
+        makePool(200),
+        rng,
+        (st, seat) => {
+          const legal = legalActions(st, seat);
+          const options: (() => ReturnType<typeof applyAction>)[] = [];
+          for (const pick of legal.picks) {
+            options.push(() => applyAction(st, seat, { type: "pick", card: pick }));
+          }
+          if (legal.canDeny) {
+            const pack = st.currentPacks[activePackIndex(st, seat)];
+            const cards: CardRef[] = [
+              ...pack.players.map((x) => ({ kind: "player" as const, steamId: x.steamId })),
+              ...pack.heroes.map((h) => ({ kind: "hero" as const, heroId: h })),
+            ];
+            options.push(() =>
+              applyAction(st, seat, { type: "deny", card: cards[Math.floor(rng() * cards.length)] }),
+            );
+          }
+          if (legal.canMulligan) options.push(() => applyAction(st, seat, { type: "mulligan" }));
+          return options[Math.floor(rng() * options.length)]();
+        },
+      );
+      expectValidBoards(done);
+    }
+  });
+
+  it("autopick can finish a whole turbo draft by itself", () => {
+    const rng = mulberry32(777);
+    const done = runTurboDraft(turboDraft(6), makePool(160), rng, (st, seat) =>
+      applyAction(st, seat, autopick(st, seat, {})),
+    );
+    expectValidBoards(done);
+  });
+});
+
 describe("real card pool", () => {
   it("random drafts over the real pool terminate with legal boards (incl. 8 seats)", async () => {
     const load = async (name: string) =>
@@ -440,6 +675,39 @@ describe("real card pool", () => {
           ? applyAction(st, seat, { type: "pick", card: pick })
           : applyAction(st, seat, { type: "pass" });
       });
+      expect(done.done).toBe(true);
+      for (const b of done.boards) expect(isComplete(b.slots, b.heroes)).toBe(true);
+    }
+  });
+
+  it("random turbo drafts over the real pool terminate with legal boards", async () => {
+    const load = async (name: string) =>
+      JSON.parse(await readFile(path.join(process.cwd(), "public/data", name), "utf8"));
+    const bundle: DataBundle = {
+      events: await load("events.json"),
+      packs: await load("packs.json"),
+      heroes: await load("heroes.json"),
+      playerHeroStats: await load("playerHeroStats.json"),
+      squadSynergy: await load("squadSynergy.json"),
+    };
+    for (const { seats, seed } of [
+      { seats: 8, seed: 4 },
+      { seats: 3, seed: 5 },
+    ]) {
+      const pool = buildCardPool(bundle, "valve_legacy", "career").packs;
+      const rng = mulberry32(seed);
+      const done = runTurboDraft(
+        createDraft(seats, { mulligans: 1, mode: "turbo" }),
+        pool,
+        rng,
+        (st, seat) => {
+          const picks = legalActions(st, seat).picks;
+          return applyAction(st, seat, {
+            type: "pick",
+            card: picks[Math.floor(rng() * picks.length)],
+          });
+        },
+      );
       expect(done.done).toBe(true);
       for (const b of done.boards) expect(isComplete(b.slots, b.heroes)).toBe(true);
     }

@@ -50,6 +50,10 @@ describe("client message parsing", () => {
       t: "configure",
       config: { timerSecs: 25, visibility: "public" },
     });
+    expect(parseClientMsg({ t: "configure", config: { draftMode: "turbo" } })).toEqual({
+      t: "configure",
+      config: { draftMode: "turbo" },
+    });
     expect(parseClientMsg({ t: "rename", name: "Chan" })).toEqual({ t: "rename", name: "Chan" });
     expect(parseClientMsg({ t: "phrases", phrases: ["gg", "ez"] })).toEqual({
       t: "phrases",
@@ -86,6 +90,7 @@ describe("client message parsing", () => {
       { t: "rename", name: 42 },
       { t: "phrases", phrases: ["gg", 42] },
       { t: "configure", config: { timerSecs: 10 } },
+      { t: "configure", config: { draftMode: "hyper" } },
       { t: "draft", action: { type: "pick" } },
       { t: "draft", action: { type: "deny", card: { kind: "hero", heroId: -1 } } },
       { t: "assignHero", steamId: 1, heroId: 1.5 },

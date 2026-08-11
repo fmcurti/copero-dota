@@ -300,6 +300,147 @@ describe("start and the draft", () => {
   });
 });
 
+describe("turbo rooms", () => {
+  /** Lobby with host A and drafter B, turbo mode configured. */
+  function turboLobby(over: Partial<RoomCtx> = {}): TestRoom {
+    const room = lobbyAB(over);
+    room.send(msg("A", { t: "configure", config: { draftMode: "turbo" } }));
+    return room;
+  }
+
+  /** Run a turbo draft to completion via per-seat alarm autopicks. */
+  function turboToDone(room: TestRoom) {
+    for (let guard = 0; room.state.phase === "drafting"; guard++) {
+      if (guard > 300) throw new Error("draft did not terminate");
+      const armed = room.state.turnDeadlines!.filter((d): d is number => d != null);
+      expect(armed.length).toBeGreaterThan(0);
+      room.send({ type: "alarm" }, { now: Math.min(...armed) });
+    }
+  }
+
+  it("sanitizes draftMode and locks it into the engine on start", () => {
+    const room = lobbyAB();
+    room.send(msg("A", { t: "configure", config: { draftMode: "hyper" as never } }));
+    expect(room.state.config.draftMode).toBe("classic");
+    room.send(msg("A", { t: "configure", config: { draftMode: "turbo" } }));
+    room.send(msg("A", { t: "start" }));
+    expect(room.state.engine!.mode).toBe("turbo");
+  });
+
+  it("start deals a wave: every seat holds a pack, per-seat clocks armed", () => {
+    const room = turboLobby();
+    room.send(msg("A", { t: "start" }));
+    const r = room.state;
+    expect(r.engine!.currentPacks).toHaveLength(2);
+    expect(r.engine!.turnSeat).toBeNull();
+    expect(r.turnDeadline).toBeNull();
+    expect(r.turnDeadlines).toEqual([T0 + 15_000, T0 + 15_000]);
+    const snap = snapshotOf(r, () => {
+      throw new Error("sim not needed while drafting");
+    });
+    expect(snap.draft!.mode).toBe("turbo");
+    expect(snap.draft!.turnDeadlines).toEqual([T0 + 15_000, T0 + 15_000]);
+  });
+
+  it("seats act simultaneously; a clock survives only while the same pack is in hand", () => {
+    const room = turboLobby();
+    room.send(msg("A", { t: "start" }));
+    // B picks first — there is no turn order to violate
+    const pickB = legalActions(room.state.engine!, 1).picks[0];
+    const res = room.send(
+      msg("B", { t: "draft", action: { type: "pick", card: pickB } }),
+      { now: T0 + 3_000 },
+    );
+    expect(res.reply).toBeUndefined();
+    // B's leftovers queue behind A's own pack: A's clock is untouched
+    expect(room.state.turnDeadlines![0]).toBe(T0 + 15_000);
+    // B holds nothing now → no clock
+    expect(room.state.turnDeadlines![1]).toBeNull();
+    // A picks; A's leftovers reach B and B's clock re-arms; A moves on to
+    // B's leftovers, a new pack in hand → fresh clock too
+    const pickA = legalActions(room.state.engine!, 0).picks[0];
+    room.send(msg("A", { t: "draft", action: { type: "pick", card: pickA } }), { now: T0 + 5_000 });
+    expect(room.state.turnDeadlines).toEqual([T0 + 20_000, T0 + 20_000]);
+  });
+
+  it("the alarm autopicks only the seats whose clocks ran out", () => {
+    const room = turboLobby();
+    room.send(msg("A", { t: "start" }));
+    const pickB = legalActions(room.state.engine!, 1).picks[0];
+    room.send(msg("B", { t: "draft", action: { type: "pick", card: pickB } }), { now: T0 + 3_000 });
+    const before = room.state.engine!;
+    const res = room.send({ type: "alarm" }, { now: T0 + 15_000 });
+    expect(res.changed).toBe(true);
+    // A was autopicked: its own pack moved on to B, whose clock re-armed
+    expect(room.state.engine!.takenSteamIds.length + roomHeroes(room)).toBeGreaterThan(
+      before.takenSteamIds.length + beforeHeroes(before),
+    );
+    expect(room.state.turnDeadlines![1]).toBe(T0 + 30_000);
+    // a premature alarm changes nothing
+    expect(room.send({ type: "alarm" }, { now: T0 + 16_000 }).changed).toBe(false);
+  });
+
+  it("turbo timeouts run the draft all the way to assembled", () => {
+    const room = turboLobby();
+    room.send(msg("A", { t: "start" }));
+    turboToDone(room);
+    const r = room.state;
+    expect(r.phase).toBe("assembled");
+    expect(r.turnDeadlines).toBeNull();
+    expect(r.strengths).toHaveLength(2);
+    expect(r.field).toHaveLength(18);
+  });
+
+  it("replays identically from the same seed", () => {
+    const run = () => {
+      const room = turboLobby({ random: mulberry32(7) });
+      room.send(msg("A", { t: "start" }), { random: mulberry32(7) });
+      turboToDone(room);
+      return room.state;
+    };
+    const a = run();
+    const b = run();
+    expect(a.draftSeed).toBe(b.draftSeed);
+    expect(a.engine!.boards).toEqual(b.engine!.boards);
+  });
+
+  it("nextAlarm is the earliest armed seat clock", () => {
+    const r = { ...freshRoom(), phase: "drafting" as const, turnDeadlines: [500, null, 300] };
+    expect(nextAlarm(r, { now: T0, empty: false })).toBe(300);
+    expect(
+      nextAlarm({ ...r, turnDeadlines: [null, null, null] }, { now: T0, empty: false }),
+    ).toBeNull();
+  });
+
+  it("migration defaults the turbo fields on pre-turbo rooms", () => {
+    const room = lobbyAB();
+    room.send(msg("A", { t: "start" }));
+    const stored = structuredClone(room.state) as RoomState & {
+      engine: Record<string, unknown>;
+    };
+    delete stored.engine.mode;
+    delete stored.engine.packDealtTo;
+    delete stored.engine.packPassCount;
+    delete stored.engine.owedPacks;
+    delete (stored as Partial<RoomState>).turnDeadlines;
+    const m = migrateRoom(stored, T0);
+    expect(m.engine!.mode).toBe("classic");
+    expect(m.engine!.packDealtTo).toEqual([]);
+    expect(m.engine!.packPassCount).toEqual([]);
+    expect(m.engine!.owedPacks).toEqual([]);
+    expect(m.turnDeadlines).toBeNull();
+    expect(m.config.draftMode).toBe("classic");
+  });
+});
+
+/** Total heroes drafted across all boards — progress metric for alarm tests. */
+function beforeHeroes(e: { boards: { heroes: number[] }[] }): number {
+  return e.boards.reduce((sum, b) => sum + b.heroes.length, 0);
+}
+function roomHeroes(room: TestRoom): number {
+  return beforeHeroes(room.state.engine!);
+}
+
 describe("assignHero", () => {
   it("is rejected in auto mode and validated in manual mode", () => {
     const auto = lobbyAB();
