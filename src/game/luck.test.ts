@@ -15,9 +15,9 @@ const team = (id: string, strength: number, luck?: SimTeam["luck"]): SimTeam => 
 });
 
 describe("luckTraitFor", () => {
-  it("derives the musu trait from a roster containing him", () => {
+  it("derives the Musu trait from a roster containing him", () => {
     const trait = luckTraitFor([{ steamId: MUSU_ID }, { steamId: 1 }]);
-    expect(trait).toEqual({ chance: 0.05, label: "La suerte del carreado" });
+    expect(trait).toEqual({ chance: 0.2, label: "La suerte del carreado" });
   });
 
   it("is undefined for rosters without a lucky player", () => {

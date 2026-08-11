@@ -118,7 +118,7 @@ export interface HumanSeed {
   ownerId: string;
   name: string;
   strength: number;
-  /** Per-game luck trait carried by this roster (e.g. musu). */
+  /** Per-game luck trait carried by this roster (e.g. Musu). */
   luck?: LuckTrait;
 }
 

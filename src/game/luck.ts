@@ -15,8 +15,8 @@ interface LuckyPlayer {
 }
 
 const LUCKY_PLAYERS: LuckyPlayer[] = [
-  // musu (Dick Chainy, OVR 1): some games the carry gets carried.
-  { steamId: 9000000001, label: "La suerte del carreado", chance: 0.05 },
+  // Musu (Dick Chainy, OVR 1): some games the carry gets carried.
+  { steamId: 9000000001, label: "La suerte del carreado", chance: 0.2 },
 ];
 
 /** The luck trait a drafted roster carries, if any. */
