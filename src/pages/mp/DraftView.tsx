@@ -17,6 +17,7 @@ import { NO_DRAFT_CUES, draftCues } from "../../mp/roomView";
 import { synergyHints } from "../../mp/synergy";
 import type { ClientMsg, RoomSnapshot } from "../../mp/protocol";
 import { announce, preloadAnnouncer } from "./announcer";
+import { ChatPanel } from "./ChatPanel";
 import { SoundControl } from "./SoundControl";
 import { TurnTimer } from "./TurnTimer";
 import { useNow } from "./useRoom";
@@ -574,6 +575,13 @@ export function DraftView({
             queued={heldBySeat[i]}
           />
         ))}
+        <ChatPanel
+          chat={snapshot.chat ?? []}
+          myId={mySeat >= 0 ? seats[mySeat].playerId : null}
+          canChat={mySeat >= 0}
+          send={send}
+          docked
+        />
       </aside>
     </div>
   );

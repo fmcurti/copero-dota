@@ -96,6 +96,23 @@ describe("Room client host", () => {
     expect(JSON.parse(h.sent.at(-1)!)).toEqual({ t: "phrases", phrases: ["una más"] });
   });
 
+  it("round-trips the optional chat log and rejects a malformed one", () => {
+    const h = harness();
+    const chat = [{ seq: 1, playerId: "p1", name: "Alpha", text: "hola", at: 100 }];
+    expect(
+      h.host.dispatch({
+        type: "frame",
+        raw: JSON.stringify({ t: "snapshot", room: { ...snapshot(), chat } }),
+      }),
+    ).toMatchObject({ kind: "session", session: { snapshot: { chat } } });
+    expect(
+      h.host.dispatch({
+        type: "frame",
+        raw: JSON.stringify({ t: "snapshot", room: { ...snapshot(), chat: [{ seq: 1 }] } }),
+      }),
+    ).toMatchObject({ kind: "problem", problem: { fatal: true } });
+  });
+
   it("executes the lobby-to-Draft stinger cue", () => {
     const h = harness();
     h.host.dispatch({

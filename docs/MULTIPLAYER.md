@@ -92,6 +92,23 @@ legality, exclusivity, Deny and chemistry rules, but removes the shared turn:
   hands and re-arms per pack; timeout autopicks only your pack. The DO's one
   alarm slot holds the earliest armed clock.
 
+### Chat (added 2026-08-11)
+
+- One room-wide text chat, available in **every phase** (lobby through done).
+  Docked in the draft screen's right rail; a collapsible floating panel with
+  an unread badge everywhere else.
+- **Seated drafters send; spectators read only.** Enforced by the reducer's
+  existing seat lookup — no separate permission model.
+- Messages are a **bounded log inside `RoomState`** (last 50, 200 chars each,
+  single-line sanitized like win phrases) carried in the regular snapshot —
+  deliberately **no separate chat channel or backlog protocol**. Entries are
+  attributed by `playerId` + name-at-send-time, so kicks and renames never
+  orphan old messages; a monotonic `seq` survives log rotation and powers
+  unread counts.
+- Flood guard derived from the log itself: max 5 messages per sender per 10s.
+- Non-goals: no history beyond the room's one-hour-after-empty life, no typing
+  indicators, no per-message delivery frames.
+
 ### Tournament
 - Field = N human teams + (18−N) AI teams.
 - **AI strength scales to the lobby**: mean = min(avg(human team OVR) − 4,

@@ -25,6 +25,7 @@ import {
 import { nameTaken } from "../../mp/seating";
 import type { RoomView } from "../../mp/roomView";
 import { WinPhrasesEditor } from "../../components/WinPhrases";
+import { ChatPanel } from "./ChatPanel";
 import { DraftView } from "./DraftView";
 import { useRoomHost } from "./useRoom";
 
@@ -126,6 +127,14 @@ export default function Room() {
           playerId={playerId}
           send={send}
           heroById={heroById}
+        />
+      )}
+      {snapshot.phase !== "drafting" && (
+        <ChatPanel
+          chat={snapshot.chat ?? []}
+          myId={playerId}
+          canChat={mySeat >= 0}
+          send={send}
         />
       )}
     </div>

@@ -3,7 +3,7 @@ import type { Beat } from "../game/beats";
 import { mulberry32 } from "../game/rng";
 import type { DataBundle, Pack, PackPlayer, Role, SimResult } from "../game/types";
 import { legalActions } from "./engine";
-import type { ClientMsg } from "./protocol";
+import { CHAT_LOG_CAP, MAX_CHAT_LEN, type ClientMsg } from "./protocol";
 import {
   CLEANUP_MS,
   freshRoom,
@@ -212,6 +212,87 @@ describe("rename and phrases", () => {
     expect(room.state.phrases).toEqual({ B: ["gg ez"] });
     room.send(msg("B", { t: "phrases", phrases: [] }));
     expect(room.state.phrases).toEqual({});
+  });
+});
+
+describe("chat", () => {
+  const noSim = () => {
+    throw new Error("sim not needed in lobby");
+  };
+
+  it("appends a seated player's message and projects it into the snapshot", () => {
+    const room = lobbyAB();
+    const res = room.send(msg("B", { t: "chat", text: "  hola   copero  " }));
+    expect(res.changed).toBe(true);
+    expect(room.state.chat).toEqual([
+      { seq: 1, playerId: "B", name: "Bo", text: "hola copero", at: T0 },
+    ]);
+    expect(snapshotOf(room.state, noSim).chat).toEqual(room.state.chat);
+  });
+
+  it("rejects unseated senders and empty messages", () => {
+    const room = lobbyAB();
+    expect(room.send(msg("Z", { t: "chat", text: "hi" })).reply?.code).toBe("no-seat");
+    expect(room.send(msg("A", { t: "chat", text: "   " })).reply?.code).toBe("empty-chat");
+    expect(room.state.chat).toEqual([]);
+  });
+
+  it("stores over-long messages truncated", () => {
+    const room = lobbyAB();
+    room.send(msg("A", { t: "chat", text: "x".repeat(MAX_CHAT_LEN + 50) }));
+    expect(room.state.chat[0].text).toHaveLength(MAX_CHAT_LEN);
+  });
+
+  it("caps the log while seq stays monotonic across the rotation", () => {
+    const room = lobbyAB();
+    for (let i = 0; i < CHAT_LOG_CAP + 5; i++) {
+      // Spaced out so the flood guard never trips.
+      const res = room.send(msg("A", { t: "chat", text: `m${i}` }), { now: T0 + i * 3000 });
+      expect(res.reply).toBeUndefined();
+    }
+    expect(room.state.chat).toHaveLength(CHAT_LOG_CAP);
+    expect(room.state.chat[0].seq).toBe(6);
+    expect(room.state.chat.at(-1)!.seq).toBe(CHAT_LOG_CAP + 5);
+  });
+
+  it("flood-guards a sender's sixth message inside ten seconds", () => {
+    const room = lobbyAB();
+    for (let i = 0; i < 5; i++) {
+      expect(room.send(msg("A", { t: "chat", text: `m${i}` })).reply).toBeUndefined();
+    }
+    expect(room.send(msg("A", { t: "chat", text: "spam" })).reply?.code).toBe("chat-flood");
+    // Another seat is not throttled by A's flood…
+    expect(room.send(msg("B", { t: "chat", text: "hi" })).reply).toBeUndefined();
+    // …and A recovers once the window slides past.
+    expect(
+      room.send(msg("A", { t: "chat", text: "back" }), { now: T0 + 11_000 }).reply,
+    ).toBeUndefined();
+  });
+
+  it("works mid-draft and never demands the data bundle", () => {
+    const room = lobbyAB();
+    room.send(msg("A", { t: "start" }));
+    expect(needsData(room.state, msg("A", { t: "chat", text: "gl" }))).toBe(false);
+    const res = room.send(msg("A", { t: "chat", text: "gl" }), { data: null });
+    expect(res.changed).toBe(true);
+    expect(room.state.chat.at(-1)!.text).toBe("gl");
+  });
+
+  it("keeps attribution through kicks and renames", () => {
+    const room = lobbyAB();
+    room.send(msg("B", { t: "chat", text: "see ya" }));
+    room.send(msg("A", { t: "chat", text: "bye" }));
+    room.send(msg("A", { t: "kick", playerId: "B" }));
+    room.send(msg("A", { t: "rename", name: "Zeus" }));
+    room.send(msg("A", { t: "chat", text: "alone now" }));
+    // Old entries keep the name they were sent under — kicked or renamed.
+    expect(room.state.chat.map((m) => m.name)).toEqual(["Bo", "Alice", "Zeus"]);
+  });
+
+  it("migration defaults the log on pre-chat rooms", () => {
+    const legacy = { ...freshRoom() } as Partial<RoomState> as RoomState;
+    delete (legacy as Partial<RoomState>).chat;
+    expect(migrateRoom(legacy, T0).chat).toEqual([]);
   });
 });
 

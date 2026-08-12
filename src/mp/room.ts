@@ -15,12 +15,15 @@ import {
   type EngineState,
 } from "./engine";
 import {
+  CHAT_LOG_CAP,
   DEFAULT_MP_CONFIG,
   MAX_SEATS,
   MIN_SEATS,
   hasYouTag,
+  sanitizeChatText,
   sanitizeName,
   sanitizeWinPhrases,
+  type ChatEntry,
   type ClientMsg,
   type MpConfig,
   type Phase,
@@ -65,6 +68,8 @@ export interface RoomState {
   draftSeed: number | null;
   /** Victory phrases by playerId — server-side secret until a taunt beat fires. */
   phrases: Record<string, string[]>;
+  /** Bounded message log (last CHAT_LOG_CAP), seated senders only. */
+  chat: ChatEntry[];
 }
 
 export const freshRoom = (): RoomState => ({
@@ -83,6 +88,7 @@ export const freshRoom = (): RoomState => ({
   beatDeadline: null,
   draftSeed: null,
   phrases: {},
+  chat: [],
 });
 
 export const CLEANUP_MS = 60 * 60 * 1000;
@@ -328,6 +334,18 @@ function onMessage(
       const phrases = sanitizeWinPhrases(msg.phrases);
       if (phrases.length) r.phrases[playerId] = phrases;
       else delete r.phrases[playerId];
+      return { state: r, changed: true };
+    }
+    case "chat": {
+      const text = sanitizeChatText(msg.text);
+      if (!text) return err(r, "empty-chat", "Message is empty.");
+      // Flood guard read off the log itself — no extra state to persist.
+      const recent = r.chat.filter((m) => m.playerId === playerId && m.at > ctx.now - 10_000);
+      if (recent.length >= 5) return err(r, "chat-flood", "Slow down a moment.");
+      const seq = (r.chat.at(-1)?.seq ?? 0) + 1;
+      r.chat = [...r.chat, { seq, playerId, name: r.seats[seat].name, text, at: ctx.now }].slice(
+        -CHAT_LOG_CAP,
+      );
       return { state: r, changed: true };
     }
     case "start": {
@@ -607,6 +625,7 @@ export function snapshotOf(r: RoomState, sim: SimProvider): RoomSnapshot {
     // count: the client rebuilds the beat list locally and asserts agreement.
     beat: r.beat ? { ...r.beat, count: sim().beats.length } : null,
     taunt: currentTaunt(r, sim),
+    chat: r.chat,
   };
 }
 
@@ -634,6 +653,7 @@ export function migrateRoom(stored: RoomState, now: number): RoomState {
   stored.draftSeed ??= null;
   stored.beatDeadline ??= null;
   stored.turnDeadlines ??= null;
+  stored.chat ??= [];
   // A pre-reducer room caught mid-reveal has no stored deadline — tick soon
   // rather than stalling the broadcast for everyone.
   if (stored.phase === "broadcasting" && stored.beat?.playing && stored.beatDeadline == null) {

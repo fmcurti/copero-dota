@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_MP_CONFIG,
+  MAX_CHAT_LEN,
   NAME_MAX,
   hasYouTag,
   parseClientMsg,
   parseServerMsg,
+  sanitizeChatText,
   sanitizeName,
 } from "./protocol";
 
@@ -51,6 +53,14 @@ describe("team name sanitising", () => {
   });
 });
 
+describe("chat text sanitising", () => {
+  it("trims, collapses whitespace, and caps length", () => {
+    expect(sanitizeChatText("  hola   copero  ")).toBe("hola copero");
+    expect(sanitizeChatText("x".repeat(500))).toHaveLength(MAX_CHAT_LEN);
+    expect(sanitizeChatText("   \n\t ")).toBe("");
+  });
+});
+
 describe("client message parsing", () => {
   it("accepts and normalizes every message family", () => {
     expect(parseClientMsg({ t: "configure", config: { timerSecs: 25, visibility: "public", ignored: true } })).toEqual({
@@ -62,6 +72,7 @@ describe("client message parsing", () => {
       config: { draftMode: "turbo" },
     });
     expect(parseClientMsg({ t: "rename", name: "Chan" })).toEqual({ t: "rename", name: "Chan" });
+    expect(parseClientMsg({ t: "chat", text: "hola" })).toEqual({ t: "chat", text: "hola" });
     expect(parseClientMsg({ t: "phrases", phrases: ["gg", "ez"] })).toEqual({
       t: "phrases",
       phrases: ["gg", "ez"],
@@ -95,6 +106,8 @@ describe("client message parsing", () => {
       {},
       { t: "wat" },
       { t: "rename", name: 42 },
+      { t: "chat" },
+      { t: "chat", text: 42 },
       { t: "phrases", phrases: ["gg", 42] },
       { t: "configure", config: { timerSecs: 10 } },
       { t: "configure", config: { draftMode: "hyper" } },
@@ -122,9 +135,18 @@ describe("server message parsing", () => {
   };
 
   it("accepts Snapshot and error frames", () => {
+    // No chat field at all — a pre-chat server must still parse.
     expect(parseServerMsg({ t: "snapshot", room: snapshot })).toEqual({
       t: "snapshot",
       room: snapshot,
+    });
+    const chatty = {
+      ...snapshot,
+      chat: [{ seq: 1, playerId: "p1", name: "Alpha", text: "hola", at: 1_000_000 }],
+    };
+    expect(parseServerMsg({ t: "snapshot", room: chatty })).toEqual({
+      t: "snapshot",
+      room: chatty,
     });
     expect(parseServerMsg({ t: "error", code: "room-full", msg: "Room is full." })).toEqual({
       t: "error",
@@ -235,6 +257,8 @@ describe("server message parsing", () => {
       { t: "snapshot", room: { ...snapshot, heroAssignments: [{ "1": "bad" }] } },
       { t: "snapshot", room: { ...snapshot, field: [{}] } },
       { t: "snapshot", room: { ...snapshot, beat: { idx: -1, playing: true } } },
+      { t: "snapshot", room: { ...snapshot, chat: [{ seq: 1 }] } },
+      { t: "snapshot", room: { ...snapshot, chat: {} } },
     ]) {
       expect(parseServerMsg(value)).toBeNull();
     }

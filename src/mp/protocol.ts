@@ -62,6 +62,26 @@ export function sanitizeWinPhrases(input: unknown): string[] {
     .slice(0, MAX_WIN_PHRASES);
 }
 
+export const MAX_CHAT_LEN = 200;
+export const CHAT_LOG_CAP = 50;
+
+export interface ChatEntry {
+  /** Monotonic per room, survives the log cap — powers unread badges. */
+  seq: number;
+  /** Kept alongside the name so own messages stay marked after a kick. */
+  playerId: string;
+  /** Seat name at send time — attribution survives unseating and renames. */
+  name: string;
+  text: string;
+  /** Epoch ms, server clock. */
+  at: number;
+}
+
+/** Shared client/server cleanup for chat messages (single line, capped). */
+export function sanitizeChatText(raw: string): string {
+  return raw.replace(/\s+/g, " ").trim().slice(0, MAX_CHAT_LEN);
+}
+
 export interface Seat {
   playerId: string;
   name: string;
@@ -109,12 +129,15 @@ export interface RoomSnapshot {
    * on the server — this is the single moment one is ever sent to clients.
    */
   taunt?: { ownerId: string; phrase: string } | null;
+  /** Bounded message log (last CHAT_LOG_CAP). Optional for rollout skew. */
+  chat?: ChatEntry[];
 }
 
 export type ClientMsg =
   | { t: "configure"; config: Partial<MpConfig> } // host, lobby only
   | { t: "rename"; name: string } // own seat, lobby only
   | { t: "phrases"; phrases: string[] } // own seat, any phase
+  | { t: "chat"; text: string } // own seat, any phase
 
   | { t: "spectate" } // vacate own seat, lobby only
   | { t: "takeSeat" } // claim an open seat, lobby only
@@ -204,6 +227,8 @@ export function parseClientMsg(value: unknown): ClientMsg | null {
     }
     case "rename":
       return typeof value.name === "string" ? { t: "rename", name: value.name } : null;
+    case "chat":
+      return typeof value.text === "string" ? { t: "chat", text: value.text } : null;
     case "phrases":
       return Array.isArray(value.phrases) && value.phrases.every((p) => typeof p === "string")
         ? { t: "phrases", phrases: value.phrases }
@@ -402,6 +427,14 @@ const isSimTeam = (value: unknown): value is SimTeam =>
       value.luck.chance <= 1 &&
       typeof value.luck.label === "string"));
 
+const isChatEntry = (value: unknown): value is ChatEntry =>
+  isRecord(value) &&
+  isId(value.seq) &&
+  typeof value.playerId === "string" &&
+  typeof value.name === "string" &&
+  typeof value.text === "string" &&
+  isId(value.at);
+
 function isRoomSnapshot(value: unknown): value is RoomSnapshot {
   if (!isRecord(value)) return false;
   if (!isPhase(value.phase) || !isConfig(value.config)) return false;
@@ -437,6 +470,11 @@ function isRoomSnapshot(value: unknown): value is RoomSnapshot {
     (!isRecord(value.taunt) ||
       typeof value.taunt.ownerId !== "string" ||
       typeof value.taunt.phrase !== "string")
+  )
+    return false;
+  if (
+    value.chat !== undefined &&
+    (!Array.isArray(value.chat) || !value.chat.every(isChatEntry))
   )
     return false;
   if (value.draft !== null && value.draft.boards.length !== value.seats.length) return false;

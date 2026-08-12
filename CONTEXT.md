@@ -74,3 +74,7 @@ tests, and reviews all say the same thing.
   from it, so a draft replays exactly from `(seed, actions)`.
 - **Directory** — the public room listing. Policy is pure
   (`src/mp/directory.ts`); a listing that exists is safe to show anyone.
+- **Chat** — the room's message log: bounded (last 50), attributed by
+  playerId + name-at-send-time, seated senders only (spectators read).
+  It lives in `RoomState` and travels inside the Snapshot like everything
+  else — there is no separate chat channel.
