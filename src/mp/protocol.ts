@@ -123,14 +123,14 @@ export interface RoomSnapshot {
   simSeed: number | null;
   // broadcasting →
   /** `count` = the server's beat total, a desync tripwire for the client. */
-  beat: { idx: number; playing: boolean; count?: number } | null;
+  beat: { idx: number; playing: boolean; count: number } | null;
   /**
    * The victory phrase for the current taunt beat, if any. Phrases live only
    * on the server — this is the single moment one is ever sent to clients.
    */
-  taunt?: { ownerId: string; phrase: string } | null;
-  /** Bounded message log (last CHAT_LOG_CAP). Optional for rollout skew. */
-  chat?: ChatEntry[];
+  taunt: { ownerId: string; phrase: string } | null;
+  /** Bounded message log (last CHAT_LOG_CAP). */
+  chat: ChatEntry[];
 }
 
 export type ClientMsg =
@@ -461,22 +461,17 @@ function isRoomSnapshot(value: unknown): value is RoomSnapshot {
     (!isRecord(value.beat) ||
       !isId(value.beat.idx) ||
       typeof value.beat.playing !== "boolean" ||
-      (value.beat.count !== undefined && !isId(value.beat.count)))
+      !isId(value.beat.count))
   )
     return false;
   if (
-    value.taunt !== undefined &&
     value.taunt !== null &&
     (!isRecord(value.taunt) ||
       typeof value.taunt.ownerId !== "string" ||
       typeof value.taunt.phrase !== "string")
   )
     return false;
-  if (
-    value.chat !== undefined &&
-    (!Array.isArray(value.chat) || !value.chat.every(isChatEntry))
-  )
-    return false;
+  if (!Array.isArray(value.chat) || !value.chat.every(isChatEntry)) return false;
   if (value.draft !== null && value.draft.boards.length !== value.seats.length) return false;
   if (value.strengths !== null && value.strengths.length !== value.seats.length) return false;
   if (

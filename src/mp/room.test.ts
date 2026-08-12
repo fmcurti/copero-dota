@@ -7,7 +7,6 @@ import { CHAT_LOG_CAP, MAX_CHAT_LEN, type ClientMsg } from "./protocol";
 import {
   CLEANUP_MS,
   freshRoom,
-  migrateRoom,
   needsData,
   nextAlarm,
   roomReducer,
@@ -288,12 +287,6 @@ describe("chat", () => {
     // Old entries keep the name they were sent under — kicked or renamed.
     expect(room.state.chat.map((m) => m.name)).toEqual(["Bo", "Alice", "Zeus"]);
   });
-
-  it("migration defaults the log on pre-chat rooms", () => {
-    const legacy = { ...freshRoom() } as Partial<RoomState> as RoomState;
-    delete (legacy as Partial<RoomState>).chat;
-    expect(migrateRoom(legacy, T0).chat).toEqual([]);
-  });
 });
 
 describe("configure", () => {
@@ -493,25 +486,6 @@ describe("turbo rooms", () => {
     ).toBeNull();
   });
 
-  it("migration defaults the turbo fields on pre-turbo rooms", () => {
-    const room = lobbyAB();
-    room.send(msg("A", { t: "start" }));
-    const stored = structuredClone(room.state) as RoomState & {
-      engine: Record<string, unknown>;
-    };
-    delete stored.engine.mode;
-    delete stored.engine.packDealtTo;
-    delete stored.engine.packPassCount;
-    delete stored.engine.owedPacks;
-    delete (stored as Partial<RoomState>).turnDeadlines;
-    const m = migrateRoom(stored, T0);
-    expect(m.engine!.mode).toBe("classic");
-    expect(m.engine!.packDealtTo).toEqual([]);
-    expect(m.engine!.packPassCount).toEqual([]);
-    expect(m.engine!.owedPacks).toEqual([]);
-    expect(m.turnDeadlines).toBeNull();
-    expect(m.config.draftMode).toBe("classic");
-  });
 });
 
 /** Total heroes drafted across all boards — progress metric for alarm tests. */
@@ -665,20 +639,8 @@ describe("presence, cleanup, and the alarm slot", () => {
   });
 });
 
-describe("migration", () => {
-  it("defaults the reducer-era fields and revives a mid-reveal deadline", () => {
-    const legacy = { ...freshRoom() } as Partial<RoomState> as RoomState;
-    delete (legacy as Partial<RoomState>).draftSeed;
-    delete (legacy as Partial<RoomState>).beatDeadline;
-    const m = migrateRoom(legacy, T0);
-    expect(m.draftSeed).toBeNull();
-    expect(m.beatDeadline).toBeNull();
-
-    const live = { ...m, phase: "broadcasting" as const, beat: { idx: 3, playing: true }, beatDeadline: null };
-    expect(migrateRoom(live, T0).beatDeadline).toBe(T0 + 1500);
-  });
-
-  it("reducer never mutates its input", () => {
+describe("reducer purity", () => {
+  it("never mutates its input", () => {
     const room = lobbyAB();
     const before = structuredClone(room.state);
     roomReducer(room.state, msg("A", { t: "rename", name: "Mutant" }), makeCtx());

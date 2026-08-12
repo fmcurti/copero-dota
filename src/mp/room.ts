@@ -629,39 +629,6 @@ export function snapshotOf(r: RoomState, sim: SimProvider): RoomSnapshot {
   };
 }
 
-// ---- persistence ----
-
-/** Rooms persisted before the spread refactor stored a single `currentPack`;
- *  rooms persisted before the reducer had no beatDeadline / draftSeed. */
-export function migrateRoom(stored: RoomState, now: number): RoomState {
-  const e = stored.engine as (EngineState & { currentPack?: unknown }) | null;
-  if (e && !Array.isArray(e.currentPacks)) {
-    e.currentPacks = e.currentPack ? [e.currentPack as EngineState["currentPacks"][number]] : [];
-    delete e.currentPack;
-    e.roundSeq ??= e.packSeq;
-  }
-  // Rooms persisted before turbo mode existed are classic drafts.
-  if (e) {
-    e.mode ??= "classic";
-    e.packDealtTo ??= [];
-    e.packPassCount ??= [];
-    e.owedPacks ??= [];
-  }
-  stored.config = sanitizeConfig(stored.config);
-  stored.heroAssignments ??= null;
-  stored.phrases ??= {};
-  stored.draftSeed ??= null;
-  stored.beatDeadline ??= null;
-  stored.turnDeadlines ??= null;
-  stored.chat ??= [];
-  // A pre-reducer room caught mid-reveal has no stored deadline — tick soon
-  // rather than stalling the broadcast for everyone.
-  if (stored.phase === "broadcasting" && stored.beat?.playing && stored.beatDeadline == null) {
-    stored.beatDeadline = now + 1500;
-  }
-  return stored;
-}
-
 export function sanitizeConfig(c: MpConfig): MpConfig {
   return {
     format: c.format === "standard" ? "standard" : "valve_legacy",
@@ -670,8 +637,6 @@ export function sanitizeConfig(c: MpConfig): MpConfig {
     draftMode: c.draftMode === "turbo" ? "turbo" : "classic",
     timerSecs: c.timerSecs === 7 || c.timerSecs === 25 || c.timerSecs === null ? c.timerSecs : 15,
     mulligans: c.mulligans === 0 || c.mulligans === 2 ? c.mulligans : 1,
-    // Rooms that predate the directory have no visibility at all — falling to
-    // "private" keeps them exactly as discoverable as they were before.
     visibility:
       c.visibility === "public" || c.visibility === "spectatable" ? c.visibility : "private",
   };

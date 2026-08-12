@@ -42,7 +42,9 @@ tests, and reviews all say the same thing.
   Visitors without a seat are **spectators**.
 - **Snapshot** — the full public room state broadcast to every connection on
   every change (`RoomSnapshot` in `src/mp/protocol.ts`). One type serves all
-  seats; nothing per-seat is ever hidden in it.
+  seats; nothing per-seat is ever hidden in it. Every field is required —
+  rooms are too short-lived for version-skew tolerance, so a mismatched frame
+  is a fatal error, not something to migrate around.
 - **Draft engine** — the pure reducer for *within-spread* rules
   (`src/mp/engine.ts`): turn order, legality, deny/mulligan semantics, and the
   shared draft-action vocabulary. Its legality interface accepts the public

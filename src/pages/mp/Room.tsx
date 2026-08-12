@@ -131,7 +131,7 @@ export default function Room() {
       )}
       {snapshot.phase !== "drafting" && (
         <ChatPanel
-          chat={snapshot.chat ?? []}
+          chat={snapshot.chat}
           myId={playerId}
           canChat={mySeat >= 0}
           send={send}

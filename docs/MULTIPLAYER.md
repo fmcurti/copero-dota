@@ -109,6 +109,16 @@ legality, exclusivity, Deny and chemistry rules, but removes the shared turn:
 - Non-goals: no history beyond the room's one-hour-after-empty life, no typing
   indicators, no per-message delivery frames.
 
+### No backwards compatibility (decided 2026-08-11)
+
+Rooms live for minutes and die an hour after emptying, and the player base is
+one friend group — so protocol and stored-state changes **just break live
+rooms**. Every `RoomSnapshot` field is required (a version-skewed frame fails
+validation and the client reloads), there is no stored-state migration on DO
+wake, and no field is kept optional "for rollout". If a deploy lands mid-game,
+the room dies and the group starts a new one. Do not reintroduce migration
+shims or optional-for-skew fields.
+
 ### Tournament
 - Field = N human teams + (18−N) AI teams.
 - **AI strength scales to the lobby**: mean = min(avg(human team OVR) − 4,

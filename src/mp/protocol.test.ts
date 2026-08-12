@@ -132,10 +132,11 @@ describe("server message parsing", () => {
     field: null,
     simSeed: null,
     beat: null,
+    taunt: null,
+    chat: [],
   };
 
   it("accepts Snapshot and error frames", () => {
-    // No chat field at all — a pre-chat server must still parse.
     expect(parseServerMsg({ t: "snapshot", room: snapshot })).toEqual({
       t: "snapshot",
       room: snapshot,
@@ -256,7 +257,12 @@ describe("server message parsing", () => {
       { t: "snapshot", room: { ...snapshot, strengths: [{}] } },
       { t: "snapshot", room: { ...snapshot, heroAssignments: [{ "1": "bad" }] } },
       { t: "snapshot", room: { ...snapshot, field: [{}] } },
-      { t: "snapshot", room: { ...snapshot, beat: { idx: -1, playing: true } } },
+      { t: "snapshot", room: { ...snapshot, beat: { idx: -1, playing: true, count: 3 } } },
+      // Every field is required — a snapshot from a different protocol
+      // version is a fatal mismatch, not something to tolerate.
+      { t: "snapshot", room: { ...snapshot, beat: { idx: 0, playing: true } } },
+      { t: "snapshot", room: { ...snapshot, taunt: undefined } },
+      { t: "snapshot", room: { ...snapshot, chat: undefined } },
       { t: "snapshot", room: { ...snapshot, chat: [{ seq: 1 }] } },
       { t: "snapshot", room: { ...snapshot, chat: {} } },
     ]) {

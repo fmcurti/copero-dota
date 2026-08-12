@@ -13,6 +13,8 @@ function snapshot(phase: RoomSnapshot["phase"] = "lobby"): RoomSnapshot {
     field: null,
     simSeed: null,
     beat: null,
+    taunt: null,
+    chat: [],
   };
 }
 
@@ -96,7 +98,7 @@ describe("Room client host", () => {
     expect(JSON.parse(h.sent.at(-1)!)).toEqual({ t: "phrases", phrases: ["una más"] });
   });
 
-  it("round-trips the optional chat log and rejects a malformed one", () => {
+  it("round-trips the chat log and rejects a malformed one", () => {
     const h = harness();
     const chat = [{ seq: 1, playerId: "p1", name: "Alpha", text: "hola", at: 100 }];
     expect(

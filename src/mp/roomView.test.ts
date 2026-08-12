@@ -34,6 +34,8 @@ function snap(over: Partial<RoomSnapshot> = {}): RoomSnapshot {
     field: null,
     simSeed: null,
     beat: null,
+    taunt: null,
+    chat: [],
     ...over,
   };
 }

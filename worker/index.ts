@@ -21,7 +21,6 @@ import {
 } from "../src/mp/protocol";
 import {
   freshRoom,
-  migrateRoom,
   needsData,
   nextAlarm,
   roomReducer,
@@ -67,7 +66,7 @@ export class CoperoRoom extends Server<Env> {
 
   async onStart() {
     const stored = await this.ctx.storage.get<RoomState>("room");
-    if (stored) this.room = migrateRoom(stored, Date.now());
+    if (stored) this.room = stored;
   }
 
   // ---- the seam: every event goes through the reducer, effects run here ----
@@ -273,7 +272,7 @@ export class CoperoRoom extends Server<Env> {
       // accepted one — but re-anchor to storage anyway and tell everyone.
       console.error("room error, restoring from storage:", e);
       const stored = await this.ctx.storage.get<RoomState>("room");
-      if (stored) this.room = migrateRoom(stored, Date.now());
+      if (stored) this.room = stored;
       this.sendError(conn, "internal", "Something went wrong — room state restored, try again.");
       this.broadcastSnapshot();
     }

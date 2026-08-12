@@ -727,7 +727,7 @@ type BroadcastPlayback =
   | { kind: "local" }
   | {
       kind: "room";
-      beat: { idx: number; playing: boolean; count?: number };
+      beat: { idx: number; playing: boolean; count: number };
       onControl?: (action: "pause" | "resume" | "skip") => void;
     };
 
@@ -742,7 +742,7 @@ function useBroadcastPlayback(beats: Beat[], playback: BroadcastPlayback) {
   const playing = room ? room.beat.playing : localPlaying;
 
   useEffect(() => {
-    if (room?.beat.count != null && room.beat.count !== beats.length) {
+    if (room && room.beat.count !== beats.length) {
       console.warn(
         `broadcast desync: server has ${room.beat.count} beats, client built ${beats.length}`,
       );

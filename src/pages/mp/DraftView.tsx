@@ -576,7 +576,7 @@ export function DraftView({
           />
         ))}
         <ChatPanel
-          chat={snapshot.chat ?? []}
+          chat={snapshot.chat}
           myId={mySeat >= 0 ? seats[mySeat].playerId : null}
           canChat={mySeat >= 0}
           send={send}
