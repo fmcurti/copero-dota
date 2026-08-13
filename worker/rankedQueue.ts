@@ -11,7 +11,7 @@ import type { Env } from "./env";
 import {
   IDENTITY_ID_HEADER,
   IDENTITY_NAME_HEADER,
-  RANKED_INIT_PATH,
+  RANKED_INIT_URL,
   RANKED_INTERNAL_HEADER,
   RANKED_INTERNAL_TOKEN,
   RANKED_RELEASE_PATH,
@@ -30,6 +30,7 @@ import {
 // ---------------------------------------------------------------------------
 
 type QueueConnState = { userId: string; name: string; joinedAt: number } | null;
+type Member = NonNullable<QueueConnState> & { conn: Connection };
 
 interface ActiveHold {
   code: string;
@@ -96,8 +97,8 @@ export class CoperoRankedQueue extends Server<Env> {
   }
 
   /** Current members in arrival order, one per account. */
-  private members(): { conn: Connection; userId: string; name: string; joinedAt: number }[] {
-    const byUser = new Map<string, { conn: Connection; userId: string; name: string; joinedAt: number }>();
+  private members(): Member[] {
+    const byUser = new Map<string, Member>();
     for (const conn of this.getConnections()) {
       const st = conn.state as QueueConnState;
       if (!st?.userId) continue;
@@ -142,31 +143,30 @@ export class CoperoRankedQueue extends Server<Env> {
     const members = this.members();
     if (members.length >= RANKED_MIN_PLAYERS) {
       const matched = members.slice(0, RANKED_MAX_PLAYERS);
-      const code = makeRankedCode();
+      const code = await this.freshCode();
       const roster: RankedRosterEntry[] = matched.map((m) => ({ userId: m.userId, name: m.name }));
       const ns = this.env.CoperoRankedRoom;
       let ok = false;
       try {
-        const res = await ns.get(ns.idFromName(code)).fetch(
-          `https://copero.internal${RANKED_INIT_PATH}`,
-          {
-            method: "POST",
-            headers: {
-              [RANKED_INTERNAL_HEADER]: RANKED_INTERNAL_TOKEN,
-              "content-type": "application/json",
-            },
-            body: JSON.stringify({ roster }),
+        const res = await ns.get(ns.idFromName(code)).fetch(RANKED_INIT_URL, {
+          method: "POST",
+          headers: {
+            [RANKED_INTERNAL_HEADER]: RANKED_INTERNAL_TOKEN,
+            "content-type": "application/json",
           },
-        );
+          body: JSON.stringify({ roster }),
+        });
         ok = res.ok;
       } catch (e) {
         console.error("ranked queue: room init failed:", e);
       }
       if (ok) {
         const now = Date.now();
-        for (const m of matched) {
-          await this.ctx.storage.put(holdKey(m.userId), { code, at: now } satisfies ActiveHold);
-        }
+        await this.ctx.storage.put(
+          Object.fromEntries(
+            matched.map((m) => [holdKey(m.userId), { code, at: now } satisfies ActiveHold]),
+          ),
+        );
         for (const m of matched) {
           this.send(m.conn, { t: "match", code });
           m.conn.close(1000, "matched");
@@ -176,6 +176,23 @@ export class CoperoRankedQueue extends Server<Env> {
       // countdown and the next alarm rolls a new code.
     }
     await this.reconcile();
+  }
+
+  /**
+   * A room code that no completed match already owns — the code is also the
+   * eternal ranked_match primary key, so a collision with history would make
+   * the new match's result unrecordable. (A collision with a *live* room is
+   * caught separately: its init call answers "already in use".)
+   */
+  private async freshCode(): Promise<string> {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const code = makeRankedCode();
+      const taken = await this.env.AUTH_DB.prepare("SELECT 1 FROM ranked_match WHERE id = ?")
+        .bind(code)
+        .first();
+      if (!taken) return code;
+    }
+    throw new Error("could not mint an unused ranked code");
   }
 
   /** The ranked room reports a finished match: free its players to queue. */

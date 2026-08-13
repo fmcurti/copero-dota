@@ -152,6 +152,11 @@ export function useRoomHost(
   };
 }
 
+/** Whole seconds until an epoch-ms deadline, floored at zero. */
+export function secsUntil(deadline: number, now: number): number {
+  return Math.max(0, Math.ceil((deadline - now) / 1000));
+}
+
 /** Re-renders on an interval — for countdowns. */
 export function useNow(ms: number): number {
   const [now, setNow] = useState(() => Date.now());

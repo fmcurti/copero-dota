@@ -1,4 +1,11 @@
-import { DEFAULT_MP_CONFIG, type MpConfig } from "../mp/protocol";
+import {
+  DEFAULT_MP_CONFIG,
+  MAX_SEATS,
+  isId,
+  isRecord,
+  makeRoomCode,
+  type MpConfig,
+} from "../mp/protocol";
 import { RANKED_MIN_PLAYERS } from "./rating";
 
 // ---------------------------------------------------------------------------
@@ -8,8 +15,8 @@ import { RANKED_MIN_PLAYERS } from "./rating";
 // ---------------------------------------------------------------------------
 
 export { RANKED_MIN_PLAYERS };
-/** Rooms seat up to 8; late queue joiners fill toward this during countdown. */
-export const RANKED_MAX_PLAYERS = 8;
+/** Late queue joiners fill toward a full room during the countdown. */
+export const RANKED_MAX_PLAYERS = MAX_SEATS;
 /** The countdown once the queue holds a match's worth of players. */
 export const RANKED_COUNTDOWN_MS = 10_000;
 /** How long a formed room waits in its lobby before the draft auto-starts. */
@@ -36,11 +43,52 @@ export const RANKED_CONFIG: MpConfig = {
  * eternal ranked_match primary key, so the space must be collision-proof
  * across the ladder's lifetime, not just across live rooms.
  */
-export function makeRankedCode(): string {
-  const alphabet = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
-  let code = "";
-  for (let i = 0; i < 8; i++) code += alphabet[Math.floor(Math.random() * alphabet.length)];
-  return code;
+export const makeRankedCode = (): string => makeRoomCode(8);
+
+// ---- the read API's row shapes ----
+// Declared once here so the worker endpoints and the hub page share one wire
+// contract instead of drifting copies.
+
+export interface LeaderboardRow {
+  userId: string;
+  name: string;
+  image: string | null;
+  rating: number;
+  gamesPlayed: number;
+}
+
+export interface RankedProfile {
+  rating: number;
+  gamesPlayed: number;
+  /** 1-based ladder position, or null before the first ranked game. */
+  rank: number | null;
+}
+
+/** One player's line of a recorded match (`ranked_match_player`). */
+export interface RankedMatchPlayerRow {
+  userId: string;
+  teamName: string;
+  place: number;
+  gamesWon: number;
+  ratingBefore: number;
+  ratingExchange: number;
+  ratingBonus: number;
+  ratingAfter: number;
+}
+
+export interface RankedHistoryRow extends RankedMatchPlayerRow {
+  matchId: string;
+  completedAt: number;
+  players: number;
+}
+
+/** Everything the hub page shows, in one response. */
+export interface RankedHub {
+  season: number;
+  leaderboard: LeaderboardRow[];
+  /** Null when the caller has no session. */
+  me: RankedProfile | null;
+  history: RankedHistoryRow[] | null;
 }
 
 // ---- the queue's wire protocol ----
@@ -54,19 +102,13 @@ export type QueueServerMsg =
   | { t: "match"; code: string }
   | { t: "error"; code: string; msg: string };
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
-const isStamp = (value: unknown): value is number =>
-  typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
-
 /** Validate an untrusted decoded queue frame at the protocol seam. */
 export function parseQueueServerMsg(value: unknown): QueueServerMsg | null {
   if (!isRecord(value)) return null;
   if (value.t === "queue") {
-    return isStamp(value.count) &&
-      isStamp(value.position) &&
-      (value.deadline === null || isStamp(value.deadline))
+    return isId(value.count) &&
+      isId(value.position) &&
+      (value.deadline === null || isId(value.deadline))
       ? { t: "queue", count: value.count, position: value.position, deadline: value.deadline }
       : null;
   }

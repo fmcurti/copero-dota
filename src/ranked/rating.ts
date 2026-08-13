@@ -64,9 +64,9 @@ function score(a: RatedPlayer, b: RatedPlayer): number {
 }
 
 /**
- * Rate one completed match. Order of the input doesn't matter; every player
- * is scored against every other, and the per-pair sum is scaled by K/(n−1)
- * so the total swing of a match doesn't grow with the room size.
+ * Rate one completed match. Changes come back in input order. Every player is
+ * scored against every other, and the per-pair sum is scaled by K/(n−1) so
+ * the total swing of a match doesn't grow with the room size.
  */
 export function rateMatch(players: RatedPlayer[]): RatingChange[] {
   if (players.length < 2) throw new Error("rateMatch needs at least two players");

@@ -160,10 +160,10 @@ export type ClientMsg =
   | { t: "play" } // host, assembled → broadcasting
   | { t: "beat"; action: "pause" | "resume" | "skip" }; // host
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
+export const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const isId = (value: unknown): value is number =>
+export const isId = (value: unknown): value is number =>
   typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 
 const isFiniteNumber = (value: unknown): value is number =>
@@ -540,10 +540,10 @@ export function sanitizeName(raw: string): string {
     .slice(0, NAME_MAX);
 }
 
-/** 5-char room code from an unambiguous alphabet. */
-export function makeRoomCode(): string {
+/** Room code from an unambiguous alphabet — 5 chars for casual rooms. */
+export function makeRoomCode(length = 5): string {
   const alphabet = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
   let code = "";
-  for (let i = 0; i < 5; i++) code += alphabet[Math.floor(Math.random() * alphabet.length)];
+  for (let i = 0; i < length; i++) code += alphabet[Math.floor(Math.random() * alphabet.length)];
   return code;
 }

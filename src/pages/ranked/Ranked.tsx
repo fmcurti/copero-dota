@@ -4,55 +4,28 @@ import usePartySocket from "partysocket/react";
 import { authClient } from "../../auth/client";
 import { Section } from "../../components/options";
 import {
+  RANKED_MAX_PLAYERS,
   RANKED_MIN_PLAYERS,
   parseQueueServerMsg,
+  type RankedHub,
 } from "../../ranked/protocol";
 import { STARTING_RATING } from "../../ranked/rating";
-import { useNow } from "../mp/useRoom";
+import { secsUntil, useNow } from "../mp/useRoom";
 
 // ---------------------------------------------------------------------------
 // The ranked hub (docs/RANKED.md): the queue, the ladder, and your history in
-// one place. The leaderboard is public; the queue and history need a session.
-// Queue presence is the socket — leaving this page leaves the queue.
+// one place, loaded in one request. The leaderboard is public; the queue and
+// history need a session. Queue presence is the socket — leaving this page
+// leaves the queue.
 // ---------------------------------------------------------------------------
 
-interface LeaderboardRow {
-  userId: string;
-  name: string;
-  image: string | null;
-  rating: number;
-  gamesPlayed: number;
-}
-
-interface Profile {
-  rating: number;
-  gamesPlayed: number;
-  rank: number | null;
-}
-
-interface HistoryRow {
-  matchId: string;
-  completedAt: number;
-  teamName: string;
-  place: number;
-  gamesWon: number;
-  ratingBefore: number;
-  ratingExchange: number;
-  ratingBonus: number;
-  ratingAfter: number;
-  players: number;
-}
-
-function useJson<T>(url: string | null): T | null {
-  const [data, setData] = useState<T | null>(null);
+/** One-shot fetch; the session cookie decides how much the hub returns. */
+function useHub(): RankedHub | null {
+  const [data, setData] = useState<RankedHub | null>(null);
   useEffect(() => {
-    if (!url) {
-      setData(null);
-      return;
-    }
     let live = true;
-    void fetch(url, { headers: { accept: "application/json" } })
-      .then((res) => (res.ok ? (res.json() as Promise<T>) : null))
+    void fetch("/api/ranked/hub", { headers: { accept: "application/json" } })
+      .then((res) => (res.ok ? (res.json() as Promise<RankedHub>) : null))
       .then((value) => {
         if (live && value) setData(value);
       })
@@ -60,16 +33,16 @@ function useJson<T>(url: string | null): T | null {
     return () => {
       live = false;
     };
-  }, [url]);
+  }, []);
   return data;
 }
 
 export default function Ranked() {
   const { data: session, isPending } = authClient.useSession();
   const userId = session?.user.id ?? null;
-  const profile = useJson<Profile>(userId ? "/api/ranked/me" : null);
-  const history = useJson<{ rows: HistoryRow[] }>(userId ? "/api/ranked/history" : null);
-  const board = useJson<{ rows: LeaderboardRow[] }>("/api/ranked/leaderboard");
+  const hub = useHub();
+  const profile = hub?.me ?? null;
+  const history = hub?.history ?? null;
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -82,7 +55,7 @@ export default function Ranked() {
             className="anim-eyebrow-in plate ml-[0.4em] mt-1 text-lg text-slate-mid"
             style={{ animationDelay: "0.15s" }}
           >
-            {RANKED_MIN_PLAYERS}–8 drafters
+            {RANKED_MIN_PLAYERS}–{RANKED_MAX_PLAYERS} drafters
           </div>
         </div>
         <p className="beat-in mt-3 text-sm text-slate-mid" style={{ animationDelay: "0.35s" }}>
@@ -132,11 +105,13 @@ export default function Ranked() {
       </div>
 
       <div className="mx-auto mt-10 max-w-xl space-y-8">
-        {userId && history?.rows.length ? (
+        {userId && history?.length ? (
           <Section label="Your matches">
             <div className="w-full space-y-1">
-              {history.rows.map((row) => {
-                const delta = row.ratingExchange + row.ratingBonus;
+              {history.map((row) => {
+                // after − before, not exchange + bonus: the floor clamp can
+                // absorb part of a loss, and the shown delta must match.
+                const delta = row.ratingAfter - row.ratingBefore;
                 return (
                   <div
                     key={row.matchId}
@@ -171,8 +146,8 @@ export default function Ranked() {
 
         <Section label="Leaderboard">
           <div className="w-full space-y-1">
-            {board?.rows.length ? (
-              board.rows.map((row, i) => (
+            {hub?.leaderboard.length ? (
+              hub.leaderboard.map((row, i) => (
                 <div
                   key={row.userId}
                   className={`flex items-baseline gap-3 rounded-lg px-3 py-2 text-sm ${
@@ -253,8 +228,7 @@ function QueueSocket({ onLeave }: { onLeave: () => void }) {
     },
   });
 
-  const secs =
-    state?.deadline != null ? Math.max(0, Math.ceil((state.deadline - now) / 1000)) : null;
+  const secs = state?.deadline != null ? secsUntil(state.deadline, now) : null;
 
   return (
     <div className="w-full space-y-3 text-center">

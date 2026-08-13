@@ -211,16 +211,10 @@ const err = (state: RoomState, code: string, msg: string): RoomResult => ({
   reply: { code, msg },
 });
 
-/** Host powers and seat churn, none of which exist in a ranked room. */
-const RANKED_LOCKED_MSGS = new Set<ClientMsg["t"]>([
-  "configure",
-  "kick",
-  "start",
-  "play",
-  "beat",
-  "spectate",
-  "takeSeat",
-]);
+/** Seat churn, which doesn't exist in a ranked room — the roster is the
+ *  match. Host powers need no gate: a ranked room seats nobody as host, so
+ *  the ordinary not-host checks already refuse them. */
+const RANKED_LOCKED_MSGS = new Set<ClientMsg["t"]>(["spectate", "takeSeat"]);
 
 // ---- connections ----
 
@@ -274,8 +268,11 @@ function onRankedInit(
   for (const p of ev.roster) {
     r.seats = seatPlayer(r.seats, p.playerId, sanitizeName(p.name) || DEFAULT_NAME);
   }
-  // Nobody is connected yet — seats fill as the matched players arrive.
-  r.seats = r.seats.map((s) => ({ ...s, connected: false }));
+  // Nobody is connected yet — seats fill as the matched players arrive. And
+  // nobody is host: the ranked clocks do the driving, and an unmarked seat 0
+  // means every not-host check refuses host powers with no extra gating.
+  // (Ranked seats never churn, so unseatPlayer's host promotion never runs.)
+  r.seats = r.seats.map((s) => ({ ...s, connected: false, isHost: false }));
   r.ranked = { startAt: ctx.now + RANKED_START_GRACE_MS, playAt: null };
   return { state: r, changed: true };
 }
@@ -352,10 +349,8 @@ function onMessage(
 ): RoomResult {
   const { playerId, connName, msg } = ev;
 
-  // Ranked rooms have no host and no seat churn: everything a casual host
-  // would click is driven by the ranked clocks, and the roster is the match.
   if (r.ranked && RANKED_LOCKED_MSGS.has(msg.t)) {
-    return err(r, "ranked-locked", "Ranked rooms manage this automatically.");
+    return err(r, "ranked-locked", "Ranked seats are fixed for the whole match.");
   }
 
   if (msg.t === "spectate") {
@@ -696,8 +691,7 @@ export function snapshotOf(r: RoomState, sim: SimProvider): RoomSnapshot {
   return {
     phase: r.phase,
     config: r.config,
-    // ?? null: rooms stored before ranked existed lack the field entirely.
-    ranked: r.ranked ?? null,
+    ranked: r.ranked,
     seats: r.seats,
     draft: e
       ? {

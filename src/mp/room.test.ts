@@ -672,7 +672,7 @@ describe("ranked rooms", () => {
     return room;
   }
 
-  it("init seats the roster unconnected and arms the auto-start clock", () => {
+  it("init seats the roster unconnected, hostless, and arms the auto-start clock", () => {
     const room = rankedRoom();
     expect(room.state.seats.map((s) => [s.playerId, s.name, s.connected])).toEqual([
       ["u1", "Alpha", false],
@@ -680,6 +680,8 @@ describe("ranked rooms", () => {
       ["u3", "Cobra", false],
       ["u4", "Delta", false],
     ]);
+    // Nobody is host: every host power dies on the ordinary not-host check.
+    expect(room.state.seats.some((s) => s.isHost)).toBe(false);
     expect(room.state.config.cardMode).toBe("event");
     expect(room.state.config.visibility).toBe("spectatable");
     expect(room.state.ranked).toEqual({ startAt: T0 + RANKED_START_GRACE_MS, playAt: null });
@@ -706,16 +708,19 @@ describe("ranked rooms", () => {
   it("locks host powers and seat churn, but not renames or chat", () => {
     const room = rankedRoom();
     room.send(connect("u1", "Alpha"));
-    const locked: ClientMsg[] = [
+    // Host powers die on the ordinary not-host check — no seat is host.
+    const hostPowers: ClientMsg[] = [
       { t: "configure", config: {} },
       { t: "kick", playerId: "u2" },
       { t: "start" },
       { t: "play" },
       { t: "beat", action: "skip" },
-      { t: "spectate" },
-      { t: "takeSeat" },
     ];
-    for (const m of locked) {
+    for (const m of hostPowers) {
+      expect(room.send(msg("u1", m)).reply?.code).toBe("not-host");
+    }
+    // Seat churn is refused outright.
+    for (const m of [{ t: "spectate" }, { t: "takeSeat" }] as ClientMsg[]) {
       expect(room.send(msg("u1", m)).reply?.code).toBe("ranked-locked");
     }
     room.send(msg("u1", { t: "rename", name: "Los Pibes" }));

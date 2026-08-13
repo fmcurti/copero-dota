@@ -30,10 +30,17 @@ export const RANKED_INTERNAL_HEADER = "x-copero-ranked";
 /** Like the probe token: a second lock behind the edge guard, not a secret. */
 export const RANKED_INTERNAL_TOKEN = "copero-ranked-internal-4a8e";
 
+/** DO-to-DO calls go over fetch(), so they need absolute URLs (as PROBE_URL). */
+export const RANKED_INIT_URL = `https://copero.internal${RANKED_INIT_PATH}`;
+export const RANKED_RELEASE_URL = `https://copero.internal${RANKED_RELEASE_PATH}`;
+
 export interface RankedRosterEntry {
   userId: string;
   name: string;
 }
+
+/** How long a finished-but-unwritten match waits before retrying its write. */
+const RECORD_RETRY_MS = 60_000;
 
 interface RankedProfileRow {
   userId: string;
@@ -65,9 +72,12 @@ export class CoperoRankedRoom extends CoperoRoom {
       return;
     }
     // Everyone else watches. Signed-in visitors count by user id; anonymous
-    // ones by their browser id, like any casual spectator.
+    // ones by their browser id under a "spec:" namespace — the query param is
+    // client-controlled, and an unprefixed value could name a roster user id
+    // (they're public in every snapshot) and reattach to that seat.
     const url = new URL(ctx.request.url);
-    const playerId = userId ?? url.searchParams.get("playerId") ?? crypto.randomUUID();
+    const playerId =
+      userId ?? `spec:${url.searchParams.get("playerId") ?? crypto.randomUUID()}`;
     conn.setState({ playerId, name: "Spectator", spectating: true } satisfies ConnState);
     await this.dispatch(
       { type: "connect", playerId, name: "Spectator", prefersSpectator: true },
@@ -109,6 +119,12 @@ export class CoperoRankedRoom extends CoperoRoom {
     // Retry seam: any event on a finished room (including the cleanup alarm
     // about to purge it) gets another chance to land a failed rating write.
     if (before === "done") await this.tryRecordMatch();
+    if (before === "done" && !this.rated && event.type === "alarm") {
+      // The cleanup alarm purges done rooms — never while the result is
+      // still unwritten (e.g. D1 down). Hold the room and keep retrying.
+      await this.ctx.storage.setAlarm(Date.now() + RECORD_RETRY_MS);
+      return;
+    }
     await super.dispatch(event, conn);
     if (before !== "done" && this.room.phase === "done") await this.tryRecordMatch();
   }
@@ -121,7 +137,8 @@ export class CoperoRankedRoom extends CoperoRoom {
   private async tryRecordMatch() {
     if (this.rated) return;
     try {
-      if (await this.ctx.storage.get<boolean>("rated")) {
+      const flags = await this.ctx.storage.get<boolean | number>(["rated", "matchStartedAt"]);
+      if (flags.get("rated")) {
         this.rated = true;
         return;
       }
@@ -156,7 +173,7 @@ export class CoperoRankedRoom extends CoperoRoom {
       const changes = rateMatch(players);
 
       const now = Date.now();
-      const startedAt = (await this.ctx.storage.get<number>("matchStartedAt")) ?? now;
+      const startedAt = (flags.get("matchStartedAt") as number | undefined) ?? now;
       const statements = [
         db
           .prepare(
@@ -164,10 +181,10 @@ export class CoperoRankedRoom extends CoperoRoom {
              VALUES (?, ?, ?, ?, ?, ?)`,
           )
           .bind(this.name, RANKED_SEASON, JSON.stringify(r.config), r.simSeed, startedAt, now),
-        ...r.seats.map((seat, seatIdx) => {
-          const stats = result.ownerStats[seat.playerId]!;
-          const change = changes.find((c) => c.userId === seat.playerId)!;
-          return db
+        // players/changes are parallel to seats: both were built by mapping
+        // r.seats, and rateMatch returns changes in input order.
+        ...r.seats.map((seat, i) =>
+          db
             .prepare(
               `INSERT INTO ranked_match_player
                (matchId, userId, seat, teamName, place, gamesWon,
@@ -177,16 +194,16 @@ export class CoperoRankedRoom extends CoperoRoom {
             .bind(
               this.name,
               seat.playerId,
-              seatIdx,
+              i,
               seat.name,
-              stats.place,
-              stats.gamesWon,
-              change.before,
-              change.exchange,
-              change.bonus,
-              change.after,
-            );
-        }),
+              players[i].place,
+              players[i].gamesWon,
+              changes[i].before,
+              changes[i].exchange,
+              changes[i].bonus,
+              changes[i].after,
+            ),
+        ),
         ...changes.map((change) =>
           db
             .prepare(
@@ -204,9 +221,19 @@ export class CoperoRankedRoom extends CoperoRoom {
       try {
         await db.batch(statements);
       } catch (e) {
-        // A primary-key conflict means an earlier attempt already landed the
-        // whole batch (it is atomic) — everything else is a real failure.
         if (!/UNIQUE|PRIMARY KEY/i.test(String(e))) throw e;
+        // A primary-key conflict normally means an earlier attempt already
+        // landed the whole batch (it is atomic) — but verify the existing row
+        // is really this match, not a historical code collision the queue's
+        // freshCode check somehow missed. Swallowing a collision would mark
+        // this room rated while its result was rolled back.
+        const existing = await db
+          .prepare(`SELECT simSeed FROM ranked_match WHERE id = ?`)
+          .bind(this.name)
+          .first<{ simSeed: number }>();
+        if (existing?.simSeed !== r.simSeed) {
+          throw new Error(`ranked_match id collision on ${this.name}`);
+        }
       }
       await this.ctx.storage.put("rated", true);
       this.rated = true;
@@ -224,7 +251,7 @@ export class CoperoRankedRoom extends CoperoRoom {
     const stub = ns.get(ns.idFromName("main"));
     this.ctx.waitUntil(
       stub
-        .fetch(`https://copero.internal${RANKED_RELEASE_PATH}`, {
+        .fetch(RANKED_RELEASE_URL, {
           method: "POST",
           headers: {
             [RANKED_INTERNAL_HEADER]: RANKED_INTERNAL_TOKEN,

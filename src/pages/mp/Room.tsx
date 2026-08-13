@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Broadcast } from "../../components/Broadcast";
 import { DraftRecap } from "../../components/DraftRecap";
@@ -26,13 +26,10 @@ import { nameTaken } from "../../mp/seating";
 import type { RoomView } from "../../mp/roomView";
 import { WinPhrasesEditor } from "../../components/WinPhrases";
 import { authClient } from "../../auth/client";
+import type { RankedMatchPlayerRow } from "../../ranked/protocol";
 import { ChatPanel } from "./ChatPanel";
 import { DraftView } from "./DraftView";
-import { useNow, useRoomHost } from "./useRoom";
-
-export default function Room() {
-  return <RoomInner />;
-}
+import { secsUntil, useNow, useRoomHost } from "./useRoom";
 
 /**
  * The ranked room page: same Room, different party and identity. The session
@@ -45,10 +42,16 @@ export function RankedRoom() {
   if (isPending) {
     return <div className="text-center text-slate-dim">Conectando…</div>;
   }
-  return <RoomInner ranked playerId={session?.user.id} />;
+  return <Room ranked playerId={session?.user.id} />;
 }
 
-function RoomInner({ ranked = false, playerId: identity }: { ranked?: boolean; playerId?: string }) {
+export default function Room({
+  ranked = false,
+  playerId: identity,
+}: {
+  ranked?: boolean;
+  playerId?: string;
+}) {
   const { code = "" } = useParams();
   const [searchParams] = useSearchParams();
   const teamName = useRunStore((s) => s.teamName);
@@ -57,6 +60,10 @@ function RoomInner({ ranked = false, playerId: identity }: { ranked?: boolean; p
     teamName || "Your Team",
     searchParams.get("spectator") === "1",
     ranked ? { party: "copero-ranked-room", playerId: identity } : undefined,
+  );
+  const rankedResults = useRankedResults(
+    code,
+    session?.snapshot.ranked != null && session.snapshot.phase === "done",
   );
   const { bundle, error } = useBundle();
   const heroById = useHeroById(bundle);
@@ -84,10 +91,8 @@ function RoomInner({ ranked = false, playerId: identity }: { ranked?: boolean; p
 
   const { playerId, snapshot, result, view } = session;
   const { send, spectate, takeSeat, dismissStinger } = actions;
+  // Ranked rooms seat nobody as host, so isHost is already ranked-aware.
   const { mySeat, isHost, isSpectator } = view;
-  // Seat 0 still carries the host flag in a ranked room, but nobody holds
-  // host powers there — the ranked clocks start, play, and pace everything.
-  const hostPowers = isHost && snapshot.ranked == null;
 
   return (
     <div>
@@ -117,7 +122,7 @@ function RoomInner({ ranked = false, playerId: identity }: { ranked?: boolean; p
         <LobbyView
           code={code}
           snapshot={snapshot}
-          isHost={hostPowers}
+          isHost={isHost}
           myId={playerId}
           send={send}
           onSpectate={spectate}
@@ -137,7 +142,7 @@ function RoomInner({ ranked = false, playerId: identity }: { ranked?: boolean; p
         <AssembledView
           snapshot={snapshot}
           mySeat={mySeat}
-          isHost={hostPowers}
+          isHost={isHost}
           send={send}
           heroById={heroById}
         />
@@ -150,6 +155,7 @@ function RoomInner({ ranked = false, playerId: identity }: { ranked?: boolean; p
           playerId={playerId}
           send={send}
           heroById={heroById}
+          rankedResults={rankedResults}
         />
       )}
       {snapshot.phase !== "drafting" && (
@@ -327,7 +333,10 @@ function LobbyView({
         {ranked ? (
           <>
             <p className="mt-2 text-xs text-slate-mid">
-              per-event OVRs · classic · {c.timerSecs ?? "no"}s timer — set your team name below
+              {/* Derived from the config so a ruleset change can't make this lie. */}
+              {c.cardMode} OVRs · {c.draftMode} ·{" "}
+              {c.timerSecs != null ? `${c.timerSecs}s timer` : "no timer"} — set your team name
+              below
             </p>
             <RankedCountdown at={ranked.startAt} label="draft starts in" />
           </>
@@ -338,7 +347,7 @@ function LobbyView({
         )}
         {/* Everyone sees this, not just the host: if the room is on a public
             list, the people in it should know. */}
-        {!ranked && visibility !== "private" && (
+        {visibility !== "private" && (
           <div className="plate mt-3 inline-block rounded-sm border border-ink-600 px-1.5 py-0.5 text-[10px] tracking-widest text-slate-dim">
             {VISIBILITIES.find((v) => v.v === visibility)?.badge}
           </div>
@@ -400,7 +409,7 @@ function LobbyView({
         </div>
       )}
 
-      {ranked ? null : (
+      {!ranked && (
       <div className="space-y-5">
         <Section label="Who can find this room">
           {VISIBILITIES.map((v) => (
@@ -545,12 +554,42 @@ function LobbyView({
 function RankedCountdown({ at, label }: { at: number | null; label: string }) {
   const now = useNow(250);
   if (at == null) return null;
-  const secs = Math.max(0, Math.ceil((at - now) / 1000));
   return (
     <div className="plate mt-3 inline-block rounded-sm border border-trophy/40 px-2 py-0.5 text-xs tracking-widest text-trophy">
-      {label} {secs}s
+      {label} {secsUntil(at, now)}s
     </div>
   );
+}
+
+/**
+ * A finished ranked match's rating changes, keyed by user id. The room writes
+ * them to D1 in the same moment the client sees "done", so the fetch retries
+ * briefly while the write lands.
+ */
+function useRankedResults(code: string, enabled: boolean): Map<string, RankedMatchPlayerRow> | null {
+  const [rows, setRows] = useState<RankedMatchPlayerRow[] | null>(null);
+  useEffect(() => {
+    if (!enabled) return;
+    let live = true;
+    let tries = 0;
+    const attempt = () => {
+      void fetch(`/api/ranked/match/${code}`, { headers: { accept: "application/json" } })
+        .then((res) => (res.ok ? (res.json() as Promise<{ rows: RankedMatchPlayerRow[] }>) : null))
+        .then((data) => {
+          if (!live) return;
+          if (data?.rows.length) setRows(data.rows);
+          else if (++tries < 8) setTimeout(attempt, 1500);
+        })
+        .catch(() => {
+          if (live && ++tries < 8) setTimeout(attempt, 1500);
+        });
+    };
+    attempt();
+    return () => {
+      live = false;
+    };
+  }, [code, enabled]);
+  return useMemo(() => (rows ? new Map(rows.map((r) => [r.userId, r])) : null), [rows]);
 }
 
 function AssembledView({
@@ -703,6 +742,7 @@ function BroadcastView({
   playerId,
   send,
   heroById,
+  rankedResults,
 }: {
   snapshot: RoomSnapshot;
   view: RoomView;
@@ -710,14 +750,14 @@ function BroadcastView({
   playerId: string;
   send: (m: { t: "beat"; action: "pause" | "resume" | "skip" }) => void;
   heroById: Map<number, Hero>;
+  rankedResults: Map<string, RankedMatchPlayerRow> | null;
 }) {
   const navigate = useNavigate();
   // Which drafts are open on the result panel. The winner starts expanded;
   // an entry here is an explicit toggle that overrides that default.
   const [openDrafts, setOpenDrafts] = useState<Record<string, boolean>>({});
   const { beat } = snapshot;
-  // Ranked reveals pace themselves: seat 0 wears the host flag but controls nothing.
-  const hostControls = view.isHost && snapshot.ranked == null;
+  const { isHost } = view;
   const ranked = snapshot.ranked != null;
 
   if (!result || !beat) return <div className="text-slate-dim">Preparing broadcast…</div>;
@@ -731,7 +771,7 @@ function BroadcastView({
       playback={{
         kind: "room",
         beat,
-        onControl: hostControls ? (action) => send({ t: "beat", action }) : undefined,
+        onControl: isHost ? (action) => send({ t: "beat", action }) : undefined,
       }}
       footer={
         <div className="space-y-4">
@@ -747,6 +787,9 @@ function BroadcastView({
                 const board = snapshot.draft?.boards[seatIdx];
                 const strength = snapshot.strengths?.[seatIdx];
                 const expanded = openDrafts[seat.playerId] ?? i === 0;
+                const rated = rankedResults?.get(seat.playerId);
+                // after − before so the zero-floor clamp is reflected.
+                const delta = rated ? rated.ratingAfter - rated.ratingBefore : null;
                 return (
                   <div key={seat.playerId}>
                     <button
@@ -772,6 +815,17 @@ function BroadcastView({
                       <span className="shrink-0 font-mono text-xs">
                         {stats.label} · {stats.gamesWon}–{stats.gamesLost}
                       </span>
+                      {delta != null && (
+                        <span
+                          className={`shrink-0 font-mono text-xs font-bold ${
+                            delta >= 0 ? "text-trophy" : "text-dire"
+                          }`}
+                          title={`${rated!.ratingBefore} → ${rated!.ratingAfter} MMR`}
+                        >
+                          {delta >= 0 ? "+" : ""}
+                          {delta}
+                        </span>
+                      )}
                     </button>
                     {expanded && board && strength && (
                       <div className="beat-in mt-1.5 px-2 pb-2">
@@ -795,7 +849,7 @@ function BroadcastView({
             >
               {ranked ? "Back to Ranked" : "Back to Versus"}
             </button>
-            {hostControls && (
+            {isHost && (
               <button
                 onClick={() => navigate(`/mp/${makeRoomCode()}`)}
                 className="cta-dota plate flex-1 rounded-lg py-3 text-base font-bold tracking-widest"
