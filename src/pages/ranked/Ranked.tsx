@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import usePartySocket from "partysocket/react";
 import { authClient } from "../../auth/client";
 import { Section } from "../../components/options";
+import { announce, preloadAnnouncer } from "../mp/announcer";
 import {
   RANKED_MAX_PLAYERS,
   RANKED_MIN_PLAYERS,
@@ -184,7 +185,15 @@ function QueuePanel() {
     return (
       <div className="w-full space-y-3 text-center">
         <button
-          onClick={() => setQueued(true)}
+          onClick={() => {
+            // The click is the user gesture: warm the announcer so the
+            // match-found clip can play later, and ask to notify a hidden tab.
+            preloadAnnouncer();
+            if ("Notification" in window && Notification.permission === "default") {
+              void Notification.requestPermission();
+            }
+            setQueued(true);
+          }}
           className="cta-dota plate w-full rounded-lg py-4 text-lg font-bold tracking-widest"
         >
           Join Queue
@@ -198,12 +207,27 @@ function QueuePanel() {
   return <QueueSocket onLeave={() => setQueued(false)} />;
 }
 
+/** The Dota match-found moment: the horn, and a notification if the tab is
+ *  hidden (the countdown runs whether or not the player is looking). */
+function alertMatchFound() {
+  announce("matchFound");
+  if (document.hidden && "Notification" in window && Notification.permission === "granted") {
+    new Notification("Match found", {
+      body: "Your ranked draft starts in a few seconds.",
+      icon: "/favicon-180.png",
+    });
+  }
+}
+
 /** Mounted = queued. Unmounting closes the socket, which leaves the queue. */
 function QueueSocket({ onLeave }: { onLeave: () => void }) {
   const navigate = useNavigate();
   const [state, setState] = useState<{ count: number; position: number; deadline: number | null } | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const now = useNow(250);
+  // Alert once per countdown, not per queue update; a cancelled countdown
+  // re-arms the alert for the next one.
+  const alerted = useRef(false);
 
   usePartySocket({
     party: "copero-ranked-queue",
@@ -218,6 +242,8 @@ function QueueSocket({ onLeave }: { onLeave: () => void }) {
       const msg = parseQueueServerMsg(decoded);
       if (!msg) return;
       if (msg.t === "queue") {
+        if (msg.deadline != null && !alerted.current) alertMatchFound();
+        alerted.current = msg.deadline != null;
         setState({ count: msg.count, position: msg.position, deadline: msg.deadline });
         setProblem(null);
       } else if (msg.t === "match") {

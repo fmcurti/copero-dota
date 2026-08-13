@@ -2,6 +2,7 @@
 const CLIPS = {
   yourTurn: "/audio/your-turn-to-pick.mp3",
   fiveSeconds: "/audio/five-seconds.mp3",
+  matchFound: "/audio/match-found.mp3",
 } as const;
 
 const VOLUME_KEY = "copero-announcer-volume";
