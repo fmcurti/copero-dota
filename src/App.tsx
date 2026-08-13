@@ -1,4 +1,5 @@
 import { Link, Outlet, useLocation } from "react-router-dom";
+import AuthMenu from "./auth/AuthMenu";
 
 export default function App() {
   const { pathname } = useLocation();
@@ -28,6 +29,9 @@ export default function App() {
             {navLink("/solo", "New Run")}
             {navLink("/history", "History")}
           </nav>
+          <div className="flex items-center border-l border-ink-700/60 pl-4">
+            <AuthMenu />
+          </div>
         </div>
       </header>
       <main className="mx-auto max-w-6xl px-4 py-8">

@@ -6,6 +6,9 @@
   "name": "el-copero-del-dota",
   "main": "./worker/index.ts",
   "compatibility_date": "2026-08-01",
+  // Better Auth uses the Workers-native implementations exposed through the
+  // Node compatibility layer (notably crypto and AsyncLocalStorage).
+  "compatibility_flags": ["nodejs_compat"],
   // Custom domain. Requires the fmcurti.com.ar zone to be active on this
   // account first — wrangler then creates the DNS record and cert on deploy.
   // workers_dev stays on so the old *.workers.dev link keeps working.
@@ -19,6 +22,46 @@
     // index.html with a 200 — so /api/rooms would silently return HTML.
     "run_worker_first": ["/parties/*", "/api/*"]
   },
+  // Better Auth owns users, linked providers, sessions and email OTP records.
+  // Production D1 database; Wrangler automatically uses a local copy when
+  // running with its local-development defaults.
+  "d1_databases": [
+    {
+      "binding": "AUTH_DB",
+      "database_name": "el-copero-auth",
+      "database_id": "fc2958a3-1668-43e1-8d0f-e44518df5a99",
+      "migrations_dir": "migrations/auth"
+    }
+  ],
+  // Account-level secrets are fetched asynchronously by the auth module, which
+  // also accepts ordinary Worker secrets and local `.dev.vars` strings.
+  "secrets_store_secrets": [
+    {
+      "binding": "BETTER_AUTH_SECRET_STORE",
+      "store_id": "0aa8a0be7703482e8f5a804016da1d5d",
+      "secret_name": "BETTER_AUTH_SECRET"
+    },
+    {
+      "binding": "RESEND_API_KEY_STORE",
+      "store_id": "0aa8a0be7703482e8f5a804016da1d5d",
+      "secret_name": "RESEND_API_KEY"
+    },
+    {
+      "binding": "GOOGLE_CLIENT_ID_STORE",
+      "store_id": "0aa8a0be7703482e8f5a804016da1d5d",
+      "secret_name": "GOOGLE_CLIENT_ID"
+    },
+    {
+      "binding": "GOOGLE_CLIENT_SECRET_STORE",
+      "store_id": "0aa8a0be7703482e8f5a804016da1d5d",
+      "secret_name": "GOOGLE_CLIENT_SECRET"
+    },
+    {
+      "binding": "AUTH_EMAIL_FROM_STORE",
+      "store_id": "0aa8a0be7703482e8f5a804016da1d5d",
+      "secret_name": "AUTH_EMAIL_FROM"
+    }
+  ],
   "durable_objects": {
     "bindings": [
       { "name": "CoperoRoom", "class_name": "CoperoRoom" },

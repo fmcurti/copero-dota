@@ -32,3 +32,15 @@ npm run deploy   # = vite build + wrangler deploy (needs `wrangler login` once)
 
 Stats from [Datdota](https://datdota.com). Not affiliated with Valve. Team and
 player names are informational and remain the property of their owners.
+
+## Optional accounts
+
+Better Auth provides optional Google and email-code sign-in for future ranked
+features; casual play does not require an account. See [docs/AUTH.md](docs/AUTH.md)
+for the design and production setup. For local auth work, copy
+`.dev.vars.example` to `.dev.vars`, fill the provider values, and apply the
+local D1 migration:
+
+```sh
+npx wrangler d1 migrations apply AUTH_DB --local
+```

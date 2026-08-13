@@ -29,9 +29,10 @@ import {
   type RoomState,
 } from "../src/mp/room";
 import { CoperoDirectory } from "./directory";
+import { authCapabilities, handleAuth, type AuthEnv } from "./auth";
 import { DIRECTORY_ID, PROBE_HEADER, PROBE_PATH, PROBE_TOKEN } from "./probe";
 
-interface Env {
+interface Env extends AuthEnv {
   CoperoRoom: DurableObjectNamespace;
   CoperoDirectory: DurableObjectNamespace<CoperoDirectory>;
   ASSETS: Fetcher;
@@ -290,6 +291,16 @@ export { CoperoDirectory };
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+
+    if (url.pathname.startsWith("/api/auth/")) {
+      return handleAuth(request, env);
+    }
+
+    if (url.pathname === "/api/auth-config") {
+      return Response.json(await authCapabilities(env), {
+        headers: { "cache-control": "no-store" },
+      });
+    }
 
     if (url.pathname === "/api/rooms") {
       const ns = env.CoperoDirectory;

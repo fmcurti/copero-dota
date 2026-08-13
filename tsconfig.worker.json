@@ -15,5 +15,5 @@
     "types": ["@cloudflare/workers-types"]
   },
   "include": ["worker", "src/game", "src/mp"],
-  "exclude": ["src/**/*.test.ts"]
+  "exclude": ["src/**/*.test.ts", "worker/**/*.test.ts"]
 }

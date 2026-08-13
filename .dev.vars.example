@@ -1,0 +1,12 @@
+# Copy to .dev.vars for local auth development. Never commit the real values.
+# Generate the secret with: npx auth@latest secret
+BETTER_AUTH_SECRET="replace-with-at-least-32-random-characters"
+
+# Google Cloud Console OAuth 2.0 Web application credentials.
+# Local redirect URI: http://localhost:5173/api/auth/callback/google
+GOOGLE_CLIENT_ID=""
+GOOGLE_CLIENT_SECRET=""
+
+# Email OTP delivery through Resend (https://resend.com).
+RESEND_API_KEY=""
+AUTH_EMAIL_FROM="El Copero del Dota <auth@your-verified-domain.example>"
