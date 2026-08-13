@@ -20,9 +20,27 @@ function getPlayerId(): string {
   return id;
 }
 
+export interface RoomHostOptions {
+  /** PartyServer party — ranked rooms live in their own class. */
+  party?: string;
+  /**
+   * Identity override: ranked passes the signed-in user id so the client's
+   * view lines up with the seat the server bound to the session. The server
+   * never trusts this — it is only the lens the local view derives through.
+   */
+  playerId?: string;
+}
+
 /** React/WebSocket adapter for the deep client-side Room host. */
-export function useRoomHost(code: string, name: string, preferSpectator: boolean) {
-  const [playerId] = useState(getPlayerId);
+export function useRoomHost(
+  code: string,
+  name: string,
+  preferSpectator: boolean,
+  opts?: RoomHostOptions,
+) {
+  const party = opts?.party ?? "copero-room";
+  const [browserId] = useState(getPlayerId);
+  const playerId = opts?.playerId ?? browserId;
   const [session, setSession] = useState<RoomClientSession | null>(null);
   const [problemState, setProblemState] = useState<{
     code: string;
@@ -38,10 +56,11 @@ export function useRoomHost(code: string, name: string, preferSpectator: boolean
   recordRunRef.current = recordRun;
   phrasesKeyRef.current = winPhrases.join("\n");
 
-  const hostRef = useRef<{ code: string; host: RoomClientHost } | null>(null);
-  if (!hostRef.current || hostRef.current.code !== code) {
+  const hostRef = useRef<{ code: string; playerId: string; host: RoomClientHost } | null>(null);
+  if (!hostRef.current || hostRef.current.code !== code || hostRef.current.playerId !== playerId) {
     hostRef.current = {
       code,
+      playerId,
       host: new RoomClientHost(code, playerId, {
         sendRaw: (frame) => sendRawRef.current(frame),
         storage: localStorage,
@@ -79,7 +98,7 @@ export function useRoomHost(code: string, name: string, preferSpectator: boolean
   );
 
   const socket = usePartySocket({
-    party: "copero-room",
+    party,
     room: code,
     query,
     onMessage(event) {

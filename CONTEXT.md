@@ -80,3 +80,20 @@ tests, and reviews all say the same thing.
   playerId + name-at-send-time, seated senders only (spectators read).
   It lives in `RoomState` and travels inside the Snapshot like everything
   else — there is no separate chat channel.
+
+## Ranked
+
+Full decisions in `docs/RANKED.md`; auth seam in `docs/AUTH.md`.
+
+- **Ranked queue** — the one global matchmaking DO (`CoperoRankedQueue`,
+  name `main`): socket presence, deduped by Better Auth user id, first 4–8
+  form a match after a 10s countdown. It creates ranked rooms; clients never
+  do.
+- **Ranked room** — `CoperoRankedRoom`, a `CoperoRoom` subclass. Seats are
+  Better Auth user ids bound at the WebSocket upgrade; `RoomState.ranked`
+  (non-null) makes the reducer lock host powers and auto-advance via its
+  `startAt`/`playAt` clocks. On `done` the adapter writes the match and
+  rating exchange to D1, idempotently.
+- **Rating** — pairwise Elo over the humans' relative finishing order
+  (`src/ranked/rating.ts`): zero-sum, floor 0, flat TI-champion bonus.
+  Computed only on the server, stored per season in `ranked_*` D1 tables.

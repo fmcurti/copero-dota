@@ -25,11 +25,30 @@ import {
 import { nameTaken } from "../../mp/seating";
 import type { RoomView } from "../../mp/roomView";
 import { WinPhrasesEditor } from "../../components/WinPhrases";
+import { authClient } from "../../auth/client";
 import { ChatPanel } from "./ChatPanel";
 import { DraftView } from "./DraftView";
-import { useRoomHost } from "./useRoom";
+import { useNow, useRoomHost } from "./useRoom";
 
 export default function Room() {
+  return <RoomInner />;
+}
+
+/**
+ * The ranked room page: same Room, different party and identity. The session
+ * must resolve before connecting so the local view derives through the same
+ * user id the server bound to the seat; signed-out visitors spectate under
+ * their browser id like anywhere else.
+ */
+export function RankedRoom() {
+  const { data: session, isPending } = authClient.useSession();
+  if (isPending) {
+    return <div className="text-center text-slate-dim">Conectando…</div>;
+  }
+  return <RoomInner ranked playerId={session?.user.id} />;
+}
+
+function RoomInner({ ranked = false, playerId: identity }: { ranked?: boolean; playerId?: string }) {
   const { code = "" } = useParams();
   const [searchParams] = useSearchParams();
   const teamName = useRunStore((s) => s.teamName);
@@ -37,6 +56,7 @@ export default function Room() {
     code,
     teamName || "Your Team",
     searchParams.get("spectator") === "1",
+    ranked ? { party: "copero-ranked-room", playerId: identity } : undefined,
   );
   const { bundle, error } = useBundle();
   const heroById = useHeroById(bundle);
@@ -65,6 +85,9 @@ export default function Room() {
   const { playerId, snapshot, result, view } = session;
   const { send, spectate, takeSeat, dismissStinger } = actions;
   const { mySeat, isHost, isSpectator } = view;
+  // Seat 0 still carries the host flag in a ranked room, but nobody holds
+  // host powers there — the ranked clocks start, play, and pace everything.
+  const hostPowers = isHost && snapshot.ranked == null;
 
   return (
     <div>
@@ -94,7 +117,7 @@ export default function Room() {
         <LobbyView
           code={code}
           snapshot={snapshot}
-          isHost={isHost}
+          isHost={hostPowers}
           myId={playerId}
           send={send}
           onSpectate={spectate}
@@ -114,7 +137,7 @@ export default function Room() {
         <AssembledView
           snapshot={snapshot}
           mySeat={mySeat}
-          isHost={isHost}
+          isHost={hostPowers}
           send={send}
           heroById={heroById}
         />
@@ -281,6 +304,7 @@ function LobbyView({
 }) {
   const setTeamName = useRunStore((s) => s.setTeamName);
   const c = snapshot.config;
+  const ranked = snapshot.ranked;
   // Older servers (and older snapshots) have no visibility at all.
   const visibility = c.visibility ?? "private";
   const canStart = snapshot.seats.length >= MIN_SEATS;
@@ -294,16 +318,27 @@ function LobbyView({
   return (
     <div className="mx-auto max-w-3xl space-y-8">
       <div className="plate-rules py-4 text-center">
-        <div className="anim-eyebrow-in plate text-sm text-slate-dim">Sala</div>
+        <div className="anim-eyebrow-in plate text-sm text-slate-dim">
+          {ranked ? "Ranked" : "Sala"}
+        </div>
         <div className="anim-title-in plate mt-1 text-5xl font-extrabold tracking-[0.2em]">
           <span className="gold-text">{code}</span>
         </div>
-        <p className="mt-2 text-xs text-slate-mid">
-          pasale el código (o el link) a tus amigos — 2 a 8 drafters
-        </p>
+        {ranked ? (
+          <>
+            <p className="mt-2 text-xs text-slate-mid">
+              per-event OVRs · classic · {c.timerSecs ?? "no"}s timer — set your team name below
+            </p>
+            <RankedCountdown at={ranked.startAt} label="draft starts in" />
+          </>
+        ) : (
+          <p className="mt-2 text-xs text-slate-mid">
+            pasale el código (o el link) a tus amigos — 2 a 8 drafters
+          </p>
+        )}
         {/* Everyone sees this, not just the host: if the room is on a public
             list, the people in it should know. */}
-        {visibility !== "private" && (
+        {!ranked && visibility !== "private" && (
           <div className="plate mt-3 inline-block rounded-sm border border-ink-600 px-1.5 py-0.5 text-[10px] tracking-widest text-slate-dim">
             {VISIBILITIES.find((v) => v.v === visibility)?.badge}
           </div>
@@ -327,14 +362,15 @@ function LobbyView({
             />
           ),
         )}
-        {Array.from({ length: MAX_SEATS - snapshot.seats.length }, (_, i) => (
-          <div
-            key={`empty-${i}`}
-            className="rounded-lg border border-dashed border-ink-700 px-4 py-3 text-sm text-slate-dim"
-          >
-            esperando drafter…
-          </div>
-        ))}
+        {!ranked &&
+          Array.from({ length: MAX_SEATS - snapshot.seats.length }, (_, i) => (
+            <div
+              key={`empty-${i}`}
+              className="rounded-lg border border-dashed border-ink-700 px-4 py-3 text-sm text-slate-dim"
+            >
+              esperando drafter…
+            </div>
+          ))}
       </div>
 
       {!isSpectator && (
@@ -343,25 +379,28 @@ function LobbyView({
         </Section>
       )}
 
-      <div className="flex justify-center">
-        {isSpectator ? (
-          <button
-            onClick={onTakeSeat}
-            disabled={!canTakeSeat}
-            className="rounded-lg border border-ink-600 px-5 py-2 text-sm font-semibold text-slate-strong hover:border-slate-mid hover:text-bone disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {canTakeSeat ? "Take an open seat" : "Spectating · room is full"}
-          </button>
-        ) : (
-          <button
-            onClick={onSpectate}
-            className="rounded-lg border border-ink-600 px-5 py-2 text-sm font-semibold text-slate-strong hover:border-slate-mid hover:text-bone"
-          >
-            Sit this one out · spectate
-          </button>
-        )}
-      </div>
+      {!ranked && (
+        <div className="flex justify-center">
+          {isSpectator ? (
+            <button
+              onClick={onTakeSeat}
+              disabled={!canTakeSeat}
+              className="rounded-lg border border-ink-600 px-5 py-2 text-sm font-semibold text-slate-strong hover:border-slate-mid hover:text-bone disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {canTakeSeat ? "Take an open seat" : "Spectating · room is full"}
+            </button>
+          ) : (
+            <button
+              onClick={onSpectate}
+              className="rounded-lg border border-ink-600 px-5 py-2 text-sm font-semibold text-slate-strong hover:border-slate-mid hover:text-bone"
+            >
+              Sit this one out · spectate
+            </button>
+          )}
+        </div>
+      )}
 
+      {ranked ? null : (
       <div className="space-y-5">
         <Section label="Who can find this room">
           {VISIBILITIES.map((v) => (
@@ -471,8 +510,13 @@ function LobbyView({
           ))}
         </Section>
       </div>
+      )}
 
-      {isHost ? (
+      {ranked ? (
+        <div className="text-center text-sm text-slate-dim">
+          {isSpectator ? "You’re spectating this ranked lobby." : "The draft starts automatically."}
+        </div>
+      ) : isHost ? (
         <button
           onClick={() => send({ t: "start" })}
           disabled={!canStart}
@@ -493,6 +537,18 @@ function LobbyView({
           esperando a que el host arranque el draft…
         </div>
       )}
+    </div>
+  );
+}
+
+/** Seconds until a ranked clock fires, ticking in place. */
+function RankedCountdown({ at, label }: { at: number | null; label: string }) {
+  const now = useNow(250);
+  if (at == null) return null;
+  const secs = Math.max(0, Math.ceil((at - now) / 1000));
+  return (
+    <div className="plate mt-3 inline-block rounded-sm border border-trophy/40 px-2 py-0.5 text-xs tracking-widest text-trophy">
+      {label} {secs}s
     </div>
   );
 }
@@ -620,7 +676,11 @@ function AssembledView({
         </div>
       )}
 
-      {isHost ? (
+      {snapshot.ranked ? (
+        <div className="text-center">
+          <RankedCountdown at={snapshot.ranked.playAt} label="broadcast starts in" />
+        </div>
+      ) : isHost ? (
         <button
           onClick={() => send({ t: "play" })}
           className="cta-dota cta-pulse plate w-full rounded-lg py-4 text-xl font-bold tracking-widest"
@@ -656,7 +716,9 @@ function BroadcastView({
   // an entry here is an explicit toggle that overrides that default.
   const [openDrafts, setOpenDrafts] = useState<Record<string, boolean>>({});
   const { beat } = snapshot;
-  const { isHost } = view;
+  // Ranked reveals pace themselves: seat 0 wears the host flag but controls nothing.
+  const hostControls = view.isHost && snapshot.ranked == null;
+  const ranked = snapshot.ranked != null;
 
   if (!result || !beat) return <div className="text-slate-dim">Preparing broadcast…</div>;
 
@@ -669,7 +731,7 @@ function BroadcastView({
       playback={{
         kind: "room",
         beat,
-        onControl: isHost ? (action) => send({ t: "beat", action }) : undefined,
+        onControl: hostControls ? (action) => send({ t: "beat", action }) : undefined,
       }}
       footer={
         <div className="space-y-4">
@@ -728,12 +790,12 @@ function BroadcastView({
           </div>
           <div className="flex gap-3">
             <button
-              onClick={() => navigate("/")}
+              onClick={() => navigate(ranked ? "/ranked" : "/")}
               className="flex-1 rounded-lg border border-ink-600 py-3 text-sm font-semibold text-slate-strong hover:border-slate-mid hover:text-bone"
             >
-              Back to Versus
+              {ranked ? "Back to Ranked" : "Back to Versus"}
             </button>
-            {isHost && (
+            {hostControls && (
               <button
                 onClick={() => navigate(`/mp/${makeRoomCode()}`)}
                 className="cta-dota plate flex-1 rounded-lg py-3 text-base font-bold tracking-widest"

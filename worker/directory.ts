@@ -97,7 +97,10 @@ export class CoperoDirectory extends DurableObject<ProbeEnv> {
 
   private async probe(code: string, all: Map<string, RoomListing>) {
     try {
-      const ns = this.env.CoperoRoom;
+      // Ranked rooms live in their own namespace — probing the wrong one would
+      // reach a fresh empty room and delist a live game.
+      const ns =
+        all.get(code)?.kind === "ranked" ? this.env.CoperoRankedRoom : this.env.CoperoRoom;
       const res = await ns.get(ns.idFromName(code)).fetch(PROBE_URL, {
         headers: { [PROBE_HEADER]: PROBE_TOKEN },
       });

@@ -8,8 +8,8 @@ export default function Watch() {
   const { rooms, now, loaded, error } = useRooms();
   const live = directoryView(rooms, now()).liveGames;
 
-  const watch = (code: string) => {
-    navigate(`/mp/${code}?spectator=1`);
+  const watch = (code: string, kind: "casual" | "ranked") => {
+    navigate(kind === "ranked" ? `/ranked/${code}?spectator=1` : `/mp/${code}?spectator=1`);
   };
 
   return (
@@ -36,7 +36,13 @@ export default function Watch() {
       ) : live.length ? (
         <div className="space-y-2">
           {live.map((room) => (
-            <RoomRow key={room.code} room={room} action="Watch" onAction={() => watch(room.code)} live />
+            <RoomRow
+              key={room.code}
+              room={room}
+              action="Watch"
+              onAction={() => watch(room.code, room.kind)}
+              live
+            />
           ))}
         </div>
       ) : (

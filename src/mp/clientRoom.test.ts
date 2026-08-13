@@ -6,6 +6,7 @@ function snapshot(phase: RoomSnapshot["phase"] = "lobby"): RoomSnapshot {
   return {
     phase,
     config: DEFAULT_MP_CONFIG,
+    ranked: null,
     seats: [{ playerId: "p1", name: "Alpha", connected: true, isHost: true }],
     draft: null,
     strengths: null,

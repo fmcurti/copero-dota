@@ -182,8 +182,10 @@ answers who the caller is.
 3. Register the production and local Google OAuth callback URLs.
 4. Verify that solo, directory browsing, casual rooms, and spectators work with
    cookies absent.
-5. Add ranked profile tables and authenticated ranked entry endpoints.
-6. Add the separate ranked PartyServer adapter when ranked gameplay is built.
+5. ✅ Add ranked profile tables and authenticated ranked entry endpoints
+   (2026-08-13, see `docs/RANKED.md`).
+6. ✅ Add the separate ranked PartyServer adapter (`worker/rankedRoom.ts`,
+   `worker/rankedQueue.ts`).
 
 ## Production setup
 

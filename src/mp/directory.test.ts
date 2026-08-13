@@ -14,6 +14,7 @@ const seat = (playerId: string, name: string, isHost = false): Seat => ({
 function room(over: Partial<Parameters<typeof roomDirectory>[0]> = {}) {
   return {
     code: "AAAAA",
+    kind: "casual" as const,
     visibility: "public" as const,
     phase: "lobby" as const,
     seats: [seat("a", "Alpha", true), seat("b", "Bravo")],
@@ -26,6 +27,7 @@ function room(over: Partial<Parameters<typeof roomDirectory>[0]> = {}) {
 function listing(over: Partial<RoomListing> = {}): RoomListing {
   return {
     code: "AAAAA",
+    kind: "casual",
     visibility: "public",
     phase: "lobby",
     seats: 2,
@@ -54,6 +56,7 @@ describe("Room publication", () => {
     );
     expect(result.entry).toEqual({
       code: "AAAAA",
+      kind: "casual",
       visibility: "public",
       phase: "lobby",
       seats: 2,

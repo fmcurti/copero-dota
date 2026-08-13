@@ -18,4 +18,5 @@ export const PROBE_URL = `https://copero.internal${PROBE_PATH}`;
 
 export interface ProbeEnv {
   CoperoRoom: DurableObjectNamespace;
+  CoperoRankedRoom: DurableObjectNamespace;
 }

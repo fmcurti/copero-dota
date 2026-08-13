@@ -125,6 +125,7 @@ describe("server message parsing", () => {
   const snapshot = {
     phase: "lobby",
     config: DEFAULT_MP_CONFIG,
+    ranked: null,
     seats: [{ playerId: "p1", name: "Alpha", connected: true, isHost: true }],
     draft: null,
     strengths: null,

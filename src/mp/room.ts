@@ -17,6 +17,7 @@ import {
 import {
   CHAT_LOG_CAP,
   DEFAULT_MP_CONFIG,
+  DEFAULT_NAME,
   MAX_SEATS,
   MIN_SEATS,
   hasYouTag,
@@ -27,9 +28,16 @@ import {
   type ClientMsg,
   type MpConfig,
   type Phase,
+  type RankedPublic,
   type RoomSnapshot,
   type Seat,
 } from "./protocol";
+import {
+  RANKED_ALL_CONNECTED_MS,
+  RANKED_MIN_PLAYERS,
+  RANKED_PLAY_GRACE_MS,
+  RANKED_START_GRACE_MS,
+} from "../ranked/protocol";
 import { nameTaken, seatPlayer, unseatPlayer } from "./seating";
 
 // ---------------------------------------------------------------------------
@@ -70,6 +78,13 @@ export interface RoomState {
   phrases: Record<string, string[]>;
   /** Bounded message log (last CHAT_LOG_CAP), seated senders only. */
   chat: ChatEntry[];
+  /**
+   * Non-null makes this a ranked room: seats are fixed at init, host-only
+   * messages are locked, and the two deadlines auto-advance the match where a
+   * casual host would click. The ranked adapter owns identity and the rating
+   * write; every ranked rule that fits in a reducer lives here.
+   */
+  ranked: RankedPublic | null;
 }
 
 export const freshRoom = (): RoomState => ({
@@ -89,6 +104,7 @@ export const freshRoom = (): RoomState => ({
   draftSeed: null,
   phrases: {},
   chat: [],
+  ranked: null,
 });
 
 export const CLEANUP_MS = 60 * 60 * 1000;
@@ -99,7 +115,10 @@ export type RoomEvent =
   | { type: "connect"; playerId: string; name: string; prefersSpectator: boolean }
   | { type: "message"; playerId: string; connName: string; msg: ClientMsg }
   | { type: "close" }
-  | { type: "alarm" };
+  | { type: "alarm" }
+  /** The queue formed a match: seat this roster and arm the auto-start clock.
+   *  Only the ranked adapter emits it, exactly once, on a fresh room. */
+  | { type: "rankedInit"; roster: { playerId: string; name: string }[]; config: MpConfig };
 
 /** Deterministic sim + beat schedule; the host memoizes it per simSeed. */
 export type SimProvider = () => { beats: Beat[]; result: SimResult };
@@ -138,7 +157,12 @@ export interface RoomResult {
 
 /** Events that need ctx.data loaded before they can be reduced. */
 export function needsData(state: RoomState, event: RoomEvent): boolean {
-  if (event.type === "alarm") return state.phase === "drafting";
+  if (event.type === "alarm")
+    return (
+      state.phase === "drafting" ||
+      // The ranked auto-start alarm deals the first spread itself.
+      (state.phase === "lobby" && state.ranked != null)
+    );
   if (event.type !== "message") return false;
   const t = event.msg?.t;
   return t === "start" || t === "draft" || t === "assignHero";
@@ -150,6 +174,8 @@ export function needsData(state: RoomState, event: RoomEvent): boolean {
  * The host reconciles storage to this after every event.
  */
 export function nextAlarm(state: RoomState, opts: { now: number; empty: boolean }): number | null {
+  if (state.phase === "lobby" && state.ranked?.startAt != null) return state.ranked.startAt;
+  if (state.phase === "assembled" && state.ranked?.playAt != null) return state.ranked.playAt;
   if (state.phase === "drafting") {
     if (state.turnDeadlines) {
       const armed = state.turnDeadlines.filter((d): d is number => d != null);
@@ -167,13 +193,15 @@ export function roomReducer(state: RoomState, event: RoomEvent, ctx: RoomCtx): R
   const r = structuredClone(state);
   switch (event.type) {
     case "connect":
-      return onConnect(r, event);
+      return onConnect(r, event, ctx);
     case "close":
       return onClose(r, ctx);
     case "alarm":
       return onAlarm(r, ctx);
     case "message":
       return onMessage(r, event, ctx);
+    case "rankedInit":
+      return onRankedInit(r, event, ctx);
   }
 }
 
@@ -183,25 +211,38 @@ const err = (state: RoomState, code: string, msg: string): RoomResult => ({
   reply: { code, msg },
 });
 
+/** Host powers and seat churn, none of which exist in a ranked room. */
+const RANKED_LOCKED_MSGS = new Set<ClientMsg["t"]>([
+  "configure",
+  "kick",
+  "start",
+  "play",
+  "beat",
+  "spectate",
+  "takeSeat",
+]);
+
 // ---- connections ----
 
 function onConnect(
   r: RoomState,
   ev: { playerId: string; name: string; prefersSpectator: boolean },
+  ctx: RoomCtx,
 ): RoomResult {
   const { playerId, name, prefersSpectator } = ev;
   const seatIdx = r.seats.findIndex((s) => s.playerId === playerId);
   let conn: ConnPatch;
-  if (seatIdx >= 0 && prefersSpectator && r.phase === "lobby") {
+  if (seatIdx >= 0 && prefersSpectator && r.phase === "lobby" && !r.ranked) {
     conn = { playerId, name: r.seats[seatIdx].name, spectating: true };
     r.seats = unseatPlayer(r.seats, playerId);
   } else if (seatIdx >= 0) {
     // Reattach only — never clobber the seat name (it may have been renamed
     // in the lobby, and reconnects replay the stale query-string name).
+    // Ranked seats also ignore a spectator preference: the roster is the match.
     const savedName = r.seats[seatIdx].name;
     r.seats = seatPlayer(r.seats, playerId, name);
     conn = { playerId, name: savedName, spectating: false };
-  } else if (!prefersSpectator && r.phase === "lobby") {
+  } else if (!prefersSpectator && r.phase === "lobby" && !r.ranked) {
     const nextSeats = seatPlayer(r.seats, playerId, name);
     const seated = nextSeats.length > r.seats.length;
     r.seats = nextSeats;
@@ -209,7 +250,34 @@ function onConnect(
   } else {
     conn = { playerId, name, spectating: true };
   }
+  // Once the whole roster is present there is nobody to wait for: shrink the
+  // remaining lobby grace so the draft fires moments later.
+  if (r.ranked?.startAt != null && r.phase === "lobby" && r.seats.every((s) => s.connected)) {
+    r.ranked.startAt = Math.min(r.ranked.startAt, ctx.now + RANKED_ALL_CONNECTED_MS);
+  }
   return { state: r, changed: true, conns: [conn] };
+}
+
+/** Seat the queue's roster on a fresh room and arm the auto-start clock. */
+function onRankedInit(
+  r: RoomState,
+  ev: { roster: { playerId: string; name: string }[]; config: MpConfig },
+  ctx: RoomCtx,
+): RoomResult {
+  if (r.phase !== "lobby" || r.seats.length > 0 || r.ranked) {
+    return { state: r, changed: false, reply: { code: "bad-init", msg: "Room already in use." } };
+  }
+  if (ev.roster.length < RANKED_MIN_PLAYERS || ev.roster.length > MAX_SEATS) {
+    return { state: r, changed: false, reply: { code: "bad-init", msg: "Bad roster size." } };
+  }
+  r.config = sanitizeConfig(ev.config);
+  for (const p of ev.roster) {
+    r.seats = seatPlayer(r.seats, p.playerId, sanitizeName(p.name) || DEFAULT_NAME);
+  }
+  // Nobody is connected yet — seats fill as the matched players arrive.
+  r.seats = r.seats.map((s) => ({ ...s, connected: false }));
+  r.ranked = { startAt: ctx.now + RANKED_START_GRACE_MS, playAt: null };
+  return { state: r, changed: true };
 }
 
 function onClose(r: RoomState, ctx: RoomCtx): RoomResult {
@@ -228,6 +296,19 @@ function onClose(r: RoomState, ctx: RoomCtx): RoomResult {
 // ---- the one alarm: turn timeout / beat ticker / cleanup ----
 
 function onAlarm(r: RoomState, ctx: RoomCtx): RoomResult {
+  // Ranked auto-advance: the clocks do what a casual host would click.
+  if (r.phase === "lobby" && r.ranked?.startAt != null) {
+    if (ctx.now < r.ranked.startAt - 500) return { state: r, changed: false };
+    r.ranked.startAt = null;
+    startDraft(r, ctx);
+    return { state: r, changed: true };
+  }
+  if (r.phase === "assembled" && r.ranked?.playAt != null) {
+    if (ctx.now < r.ranked.playAt - 500) return { state: r, changed: false };
+    r.ranked.playAt = null;
+    startBroadcast(r, ctx);
+    return { state: r, changed: true };
+  }
   if (r.phase === "drafting" && r.engine?.mode === "turbo") {
     return onTurboAlarm(r, ctx);
   }
@@ -270,6 +351,12 @@ function onMessage(
   ctx: RoomCtx,
 ): RoomResult {
   const { playerId, connName, msg } = ev;
+
+  // Ranked rooms have no host and no seat churn: everything a casual host
+  // would click is driven by the ranked clocks, and the roster is the match.
+  if (r.ranked && RANKED_LOCKED_MSGS.has(msg.t)) {
+    return err(r, "ranked-locked", "Ranked rooms manage this automatically.");
+  }
 
   if (msg.t === "spectate") {
     if (r.phase !== "lobby")
@@ -353,17 +440,7 @@ function onMessage(
       if (r.phase !== "lobby") return err(r, "bad-phase", "Already started.");
       if (r.seats.length < MIN_SEATS)
         return err(r, "need-players", `Need at least ${MIN_SEATS} drafters.`);
-      r.draftSeed = Math.floor(ctx.random() * 1e9);
-      r.engine = createDraft(r.seats.length, {
-        mulligans: r.config.mulligans,
-        mode: r.config.draftMode,
-        // The first opener is drawn, not handed to the host — from there the
-        // usual rotation applies, so everyone still opens once per cycle.
-        openerSeat: Math.floor(seeded(r.draftSeed, 0xc0ffee)() * r.seats.length),
-      });
-      r.phase = "drafting";
-      openUntilTurn(r, ctx);
-      afterDraftStep(r, ctx);
+      startDraft(r, ctx);
       return { state: r, changed: true };
     }
     case "draft": {
@@ -400,10 +477,7 @@ function onMessage(
     case "play": {
       if (!isHost) return err(r, "not-host", "Only the host can play.");
       if (r.phase !== "assembled") return err(r, "bad-phase", "Not ready to play.");
-      const { beats } = ctx.sim();
-      r.phase = "broadcasting";
-      r.beat = { idx: 0, playing: true };
-      r.beatDeadline = ctx.now + beats[0].ms;
+      startBroadcast(r, ctx);
       return { state: r, changed: true };
     }
     case "beat": {
@@ -430,6 +504,29 @@ function onMessage(
 }
 
 // ---- draft plumbing ----
+
+/** Kick off the draft — the host's "start", also fired by the ranked clock. */
+function startDraft(r: RoomState, ctx: RoomCtx) {
+  r.draftSeed = Math.floor(ctx.random() * 1e9);
+  r.engine = createDraft(r.seats.length, {
+    mulligans: r.config.mulligans,
+    mode: r.config.draftMode,
+    // The first opener is drawn, not handed to the host — from there the
+    // usual rotation applies, so everyone still opens once per cycle.
+    openerSeat: Math.floor(seeded(r.draftSeed, 0xc0ffee)() * r.seats.length),
+  });
+  r.phase = "drafting";
+  openUntilTurn(r, ctx);
+  afterDraftStep(r, ctx);
+}
+
+/** Begin the reveal — the host's "play", also fired by the ranked clock. */
+function startBroadcast(r: RoomState, ctx: RoomCtx) {
+  const { beats } = ctx.sim();
+  r.phase = "broadcasting";
+  r.beat = { idx: 0, playing: true };
+  r.beatDeadline = ctx.now + beats[0].ms;
+}
 
 /** The pack RNG for the next spread: replayable when the draft is seeded.
  *  Turbo deals also salt with packSeq so every deal gets its own stream
@@ -541,6 +638,7 @@ function assemble(r: RoomState, ctx: RoomCtx) {
   r.phase = "assembled";
   r.turnDeadline = null;
   r.turnDeadlines = null;
+  if (r.ranked) r.ranked.playAt = ctx.now + RANKED_PLAY_GRACE_MS;
 }
 
 /** Recalculate strengths and the seeded field after a manual hero swap. */
@@ -598,6 +696,8 @@ export function snapshotOf(r: RoomState, sim: SimProvider): RoomSnapshot {
   return {
     phase: r.phase,
     config: r.config,
+    // ?? null: rooms stored before ranked existed lack the field entirely.
+    ranked: r.ranked ?? null,
     seats: r.seats,
     draft: e
       ? {

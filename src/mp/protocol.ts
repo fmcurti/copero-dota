@@ -111,9 +111,21 @@ export type DraftPublic = Pick<
   turnDeadlines: (number | null)[] | null;
 };
 
+/**
+ * A ranked room's public clock: when the lobby auto-starts the draft and when
+ * the assembled screen auto-plays. Each deadline nulls once it fires. Casual
+ * rooms carry null — a non-null value is also how clients know they are in a
+ * ranked room (no host powers, seats locked).
+ */
+export interface RankedPublic {
+  startAt: number | null;
+  playAt: number | null;
+}
+
 export interface RoomSnapshot {
   phase: Phase;
   config: MpConfig;
+  ranked: RankedPublic | null;
   seats: Seat[];
   draft: DraftPublic | null;
   // assembled →
@@ -438,6 +450,13 @@ const isChatEntry = (value: unknown): value is ChatEntry =>
 function isRoomSnapshot(value: unknown): value is RoomSnapshot {
   if (!isRecord(value)) return false;
   if (!isPhase(value.phase) || !isConfig(value.config)) return false;
+  if (
+    value.ranked !== null &&
+    (!isRecord(value.ranked) ||
+      (value.ranked.startAt !== null && !isId(value.ranked.startAt)) ||
+      (value.ranked.playAt !== null && !isId(value.ranked.playAt)))
+  )
+    return false;
   if (!Array.isArray(value.seats) || !value.seats.every(isSeat)) return false;
   if (value.draft !== null && !isDraftPublic(value.draft)) return false;
   if (

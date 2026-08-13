@@ -5,6 +5,11 @@ import type { DataBundle, Pack, PackPlayer, Role, SimResult } from "../game/type
 import { legalActions } from "./engine";
 import { CHAT_LOG_CAP, MAX_CHAT_LEN, type ClientMsg } from "./protocol";
 import {
+  RANKED_ALL_CONNECTED_MS,
+  RANKED_CONFIG,
+  RANKED_START_GRACE_MS,
+} from "../ranked/protocol";
+import {
   CLEANUP_MS,
   freshRoom,
   needsData,
@@ -645,5 +650,130 @@ describe("reducer purity", () => {
     const before = structuredClone(room.state);
     roomReducer(room.state, msg("A", { t: "rename", name: "Mutant" }), makeCtx());
     expect(room.state).toEqual(before);
+  });
+});
+
+describe("ranked rooms", () => {
+  const ROSTER = [
+    { playerId: "u1", name: "Alpha" },
+    { playerId: "u2", name: "Bravo" },
+    { playerId: "u3", name: "Cobra" },
+    { playerId: "u4", name: "Delta" },
+  ];
+  const BEATS: Beat[] = [
+    { kind: "intro", ms: 1000 },
+    { kind: "standings", ms: 500 },
+  ];
+  const sim = () => ({ beats: BEATS, result: { rounds: [] } as unknown as SimResult });
+
+  function rankedRoom(over: Partial<RoomCtx> = {}): TestRoom {
+    const room = new TestRoom(over);
+    room.send({ type: "rankedInit", roster: ROSTER, config: RANKED_CONFIG });
+    return room;
+  }
+
+  it("init seats the roster unconnected and arms the auto-start clock", () => {
+    const room = rankedRoom();
+    expect(room.state.seats.map((s) => [s.playerId, s.name, s.connected])).toEqual([
+      ["u1", "Alpha", false],
+      ["u2", "Bravo", false],
+      ["u3", "Cobra", false],
+      ["u4", "Delta", false],
+    ]);
+    expect(room.state.config.cardMode).toBe("event");
+    expect(room.state.config.visibility).toBe("spectatable");
+    expect(room.state.ranked).toEqual({ startAt: T0 + RANKED_START_GRACE_MS, playAt: null });
+    expect(nextAlarm(room.state, { now: T0, empty: false })).toBe(T0 + RANKED_START_GRACE_MS);
+    expect(needsData(room.state, { type: "alarm" })).toBe(true); // the alarm deals spreads
+  });
+
+  it("init refuses short rosters and rooms already in use", () => {
+    const fresh = new TestRoom();
+    const short = fresh.send({
+      type: "rankedInit",
+      roster: ROSTER.slice(0, 3),
+      config: RANKED_CONFIG,
+    });
+    expect(short.reply?.code).toBe("bad-init");
+    expect(fresh.state.seats).toHaveLength(0);
+
+    const used = rankedRoom();
+    expect(
+      used.send({ type: "rankedInit", roster: ROSTER, config: RANKED_CONFIG }).reply?.code,
+    ).toBe("bad-init");
+  });
+
+  it("locks host powers and seat churn, but not renames or chat", () => {
+    const room = rankedRoom();
+    room.send(connect("u1", "Alpha"));
+    const locked: ClientMsg[] = [
+      { t: "configure", config: {} },
+      { t: "kick", playerId: "u2" },
+      { t: "start" },
+      { t: "play" },
+      { t: "beat", action: "skip" },
+      { t: "spectate" },
+      { t: "takeSeat" },
+    ];
+    for (const m of locked) {
+      expect(room.send(msg("u1", m)).reply?.code).toBe("ranked-locked");
+    }
+    room.send(msg("u1", { t: "rename", name: "Los Pibes" }));
+    expect(room.state.seats[0].name).toBe("Los Pibes");
+    room.send(msg("u1", { t: "chat", text: "hola" }));
+    expect(room.state.chat).toHaveLength(1);
+  });
+
+  it("never unseats a ranked player, even on a spectator-flagged reconnect", () => {
+    const room = rankedRoom();
+    room.send(connect("u1", "Alpha", true));
+    expect(room.state.seats).toHaveLength(4);
+    expect(room.last.conns).toEqual([{ playerId: "u1", name: "Alpha", spectating: false }]);
+  });
+
+  it("keeps non-roster visitors as spectators, even in the lobby", () => {
+    const room = rankedRoom();
+    room.send(connect("x", "Rando"));
+    expect(room.state.seats).toHaveLength(4);
+    expect(room.last.conns).toEqual([{ playerId: "x", name: "Rando", spectating: true }]);
+  });
+
+  it("shrinks the lobby wait once the whole roster is connected", () => {
+    const room = rankedRoom();
+    room.send(connect("u1", "Alpha"));
+    room.send(connect("u2", "Bravo"));
+    room.send(connect("u3", "Cobra"));
+    expect(room.state.ranked!.startAt).toBe(T0 + RANKED_START_GRACE_MS);
+    room.send(connect("u4", "Delta"));
+    expect(room.state.ranked!.startAt).toBe(T0 + RANKED_ALL_CONNECTED_MS);
+  });
+
+  it("auto-starts at the deadline, auto-plays after assembly", () => {
+    const room = rankedRoom({ sim });
+    for (const p of ROSTER) room.send(connect(p.playerId, p.name));
+    const startAt = room.state.ranked!.startAt!;
+    expect(room.send({ type: "alarm" }, { now: startAt - 5000 }).changed).toBe(false); // stale
+    room.send({ type: "alarm" }, { now: startAt });
+    expect(room.state.phase).toBe("drafting");
+    expect(room.state.ranked!.startAt).toBeNull();
+
+    draftToDone(room);
+    expect(room.state.phase).toBe("assembled");
+    const playAt = room.state.ranked!.playAt!;
+    expect(nextAlarm(room.state, { now: playAt - 1, empty: false })).toBe(playAt);
+    expect(room.send({ type: "alarm" }, { now: playAt - 5000 }).changed).toBe(false); // stale
+    room.send({ type: "alarm" }, { now: playAt });
+    expect(room.state.phase).toBe("broadcasting");
+    expect(room.state.ranked!.playAt).toBeNull();
+    expect(room.state.beat).toEqual({ idx: 0, playing: true });
+  });
+
+  it("snapshots carry the ranked clock; casual rooms carry null", () => {
+    const room = rankedRoom();
+    expect(snapshotOf(room.state, sim).ranked).toEqual({
+      startAt: T0 + RANKED_START_GRACE_MS,
+      playAt: null,
+    });
+    expect(snapshotOf(freshRoom(), sim).ranked).toBeNull();
   });
 });

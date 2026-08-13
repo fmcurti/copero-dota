@@ -65,11 +65,17 @@
   "durable_objects": {
     "bindings": [
       { "name": "CoperoRoom", "class_name": "CoperoRoom" },
-      { "name": "CoperoDirectory", "class_name": "CoperoDirectory" }
+      { "name": "CoperoDirectory", "class_name": "CoperoDirectory" },
+      // Ranked (docs/RANKED.md): the one global queue and the authenticated
+      // rooms it creates. Separate classes so no `if (ranked)` leaks into
+      // CoperoRoom's casual guest path.
+      { "name": "CoperoRankedRoom", "class_name": "CoperoRankedRoom" },
+      { "name": "CoperoRankedQueue", "class_name": "CoperoRankedQueue" }
     ]
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["CoperoRoom"] },
-    { "tag": "v2", "new_sqlite_classes": ["CoperoDirectory"] }
+    { "tag": "v2", "new_sqlite_classes": ["CoperoDirectory"] },
+    { "tag": "v3", "new_sqlite_classes": ["CoperoRankedRoom", "CoperoRankedQueue"] }
   ]
 }

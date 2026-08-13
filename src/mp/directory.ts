@@ -15,6 +15,8 @@ import { MAX_SEATS, type Phase, type RoomVisibility, type Seat } from "./protoco
 export interface RoomListing {
   /** The Room code, verbatim — it is also the Durable Object name. */
   code: string;
+  /** Which room class this is: watch links and liveness probes differ. */
+  kind: "casual" | "ranked";
   visibility: Exclude<RoomVisibility, "private">;
   phase: Phase;
   seats: number;
@@ -38,6 +40,7 @@ export interface DirectoryPublicationState {
 
 export interface RoomDirectoryFacts {
   code: string;
+  kind: "casual" | "ranked";
   visibility: RoomVisibility;
   phase: Phase;
   seats: Seat[];
@@ -86,6 +89,7 @@ const listingKey = (entry: DirectoryEntry | null): string =>
     ? "none"
     : JSON.stringify([
         entry.code,
+        entry.kind,
         entry.visibility,
         entry.phase,
         entry.seats,
@@ -109,6 +113,7 @@ function listingOf(facts: RoomDirectoryFacts): DirectoryEntry | null {
 
   return {
     code: facts.code,
+    kind: facts.kind,
     visibility,
     phase,
     seats: seats.length,

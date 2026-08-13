@@ -31,6 +31,11 @@ export function RoomRow({
         <div className="flex items-baseline gap-2">
           {live && <span className="live-dot shrink-0" />}
           <span className="plate gold-text text-xl font-bold tracking-[0.2em]">{room.code}</span>
+          {room.kind === "ranked" && (
+            <span className="plate shrink-0 rounded-sm border border-trophy/50 px-1.5 py-0.5 text-[10px] tracking-widest text-trophy">
+              Ranked
+            </span>
+          )}
           <span className="plate truncate text-xs tracking-widest text-slate-dim">
             {live ? PHASE_LABEL[room.phase] : `${room.seats}/${room.maxSeats} drafters`}
           </span>
