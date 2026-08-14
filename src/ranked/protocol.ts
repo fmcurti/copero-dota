@@ -91,6 +91,11 @@ export interface RankedHub {
   history: RankedHistoryRow[] | null;
 }
 
+export interface RankedQueueStatus {
+  count: number;
+  deadline: number | null;
+}
+
 // ---- the queue's wire protocol ----
 // Presence IS the message: joining the socket joins the queue, closing it
 // leaves. The server pushes state; the client never sends anything.

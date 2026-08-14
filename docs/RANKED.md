@@ -43,6 +43,8 @@ small — it only gathers players.
   can ever form.
 - **No queue timeout.** The queue screen permanently shows the current count
   and a "play casual instead" escape hatch; nothing auto-redirects.
+- `GET /api/ranked/queue-status` publicly exposes only the live count and
+  countdown deadline. Reading it does not create a queue connection.
 - No accept/ready check: at zero the room is created and everyone is seated
   directly. An AFK player is carried by the normal timeout/autopick machinery.
 - Per `docs/AUTH.md`: the queue (not a client flag) authorizes users and
