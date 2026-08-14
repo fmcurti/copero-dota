@@ -88,7 +88,15 @@ Full decisions in `docs/RANKED.md`; auth seam in `docs/AUTH.md`.
 - **Ranked queue** — the one global matchmaking DO (`CoperoRankedQueue`,
   name `main`): socket presence, deduped by Better Auth user id, first 4–8
   form a match after a 10s countdown. It creates ranked rooms; clients never
-  do.
+  do. The DO is the **queue host** — sockets, storage, the alarm slot, and
+  the room-init call; every rule lives in the Queue policy.
+- **Queue policy** — the pure matchmaking rules (`src/ranked/queue.ts`),
+  shaped like the Directory policy: membership derived from connection facts
+  (one member per account, arrival order), the countdown rule (arm at 4,
+  cancel below — places kept, late joiners never reset), match formation
+  (head of the queue, capped at 8), and the active-hold rules (live-match
+  block, TTL, release). Presence is the one source of membership truth; the
+  policy stores nothing.
 - **Ranked room** — `CoperoRankedRoom`, a `CoperoRoom` subclass. Seats are
   Better Auth user ids bound at the WebSocket upgrade; `RoomState.ranked`
   (non-null) makes the reducer lock host powers and auto-advance via its

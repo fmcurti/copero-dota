@@ -1,12 +1,15 @@
 import { Server, type Connection, type ConnectionContext } from "partyserver";
 import { DEFAULT_NAME, sanitizeName } from "../src/mp/protocol";
 import {
-  RANKED_COUNTDOWN_MS,
-  RANKED_MAX_PLAYERS,
-  RANKED_MIN_PLAYERS,
-  makeRankedCode,
-  type QueueServerMsg,
-} from "../src/ranked/protocol";
+  formMatch,
+  holdVerdict,
+  queueMembers,
+  queuePolicy,
+  releasedHoldKeys,
+  type ActiveHold,
+  type QueueMember,
+} from "../src/ranked/queue";
+import { makeRankedCode, type QueueServerMsg } from "../src/ranked/protocol";
 import type { Env } from "./env";
 import {
   IDENTITY_ID_HEADER,
@@ -19,27 +22,17 @@ import {
 } from "./rankedRoom";
 
 // ---------------------------------------------------------------------------
-// The one global ranked queue (docs/RANKED.md). It gathers, it never balances:
-// presence is socket-based (closing the page leaves the queue), membership is
-// deduped by Better Auth user id, and at RANKED_MIN_PLAYERS a countdown starts
-// that late joiners fill but never reset. At zero it creates the ranked room
-// through the internal init call and hands every matched player the code.
+// The queue host: the one global ranked queue Durable Object (docs/RANKED.md).
+// It owns sockets, storage, the alarm slot, and the room-init call — every
+// matchmaking rule lives in the Queue policy (src/ranked/queue.ts), where
+// vitest reaches it. Presence is membership: closing the page leaves the
+// queue, and the policy derives members from live connections.
 //
 // The Worker validates the session at the upgrade; identity arrives in the
 // same internal headers the ranked room trusts. No session, no socket.
 // ---------------------------------------------------------------------------
 
-type QueueConnState = { userId: string; name: string; joinedAt: number } | null;
-type Member = NonNullable<QueueConnState> & { conn: Connection };
-
-interface ActiveHold {
-  code: string;
-  at: number;
-}
-
-/** Safety net for "seated in a live match can't queue": holds normally clear
- *  when the room records its result; this bounds a room that never does. */
-const ACTIVE_HOLD_TTL_MS = 3 * 60 * 60 * 1000;
+type QueueConnState = QueueMember | null;
 
 const holdKey = (userId: string) => `active:${userId}`;
 
@@ -56,7 +49,8 @@ export class CoperoRankedQueue extends Server<Env> {
     }
 
     const hold = await this.ctx.storage.get<ActiveHold>(holdKey(userId));
-    if (hold && Date.now() - hold.at < ACTIVE_HOLD_TTL_MS) {
+    const verdict = holdVerdict(hold, Date.now());
+    if (verdict === "block") {
       this.send(conn, {
         t: "error",
         code: "in-match",
@@ -65,7 +59,7 @@ export class CoperoRankedQueue extends Server<Env> {
       conn.close(4002, "in-match");
       return;
     }
-    if (hold) await this.ctx.storage.delete(holdKey(userId));
+    if (verdict === "stale") await this.ctx.storage.delete(holdKey(userId));
 
     // One presence per account: a second tab replaces the first.
     for (const other of this.getConnections()) {
@@ -96,53 +90,39 @@ export class CoperoRankedQueue extends Server<Env> {
     await this.reconcile();
   }
 
-  /** Current members in arrival order, one per account. */
-  private members(): Member[] {
-    const byUser = new Map<string, Member>();
+  /** Current members with their connections, as the policy derives them. */
+  private members(): (QueueMember & { conn: Connection })[] {
+    const entries: (QueueMember & { conn: Connection })[] = [];
     for (const conn of this.getConnections()) {
       const st = conn.state as QueueConnState;
-      if (!st?.userId) continue;
-      const existing = byUser.get(st.userId);
-      if (!existing || st.joinedAt < existing.joinedAt) {
-        byUser.set(st.userId, { conn, userId: st.userId, name: st.name, joinedAt: st.joinedAt });
-      }
+      if (st?.userId) entries.push({ ...st, conn });
     }
-    return [...byUser.values()].sort((a, b) => a.joinedAt - b.joinedAt);
+    return queueMembers(entries);
   }
 
-  /**
-   * The queue's one rule: enough players and no countdown starts one, too few
-   * cancels it (the remaining players keep their place), and everyone hears
-   * the new state. Joins during a countdown never reset it.
-   */
+  /** Ask the policy what the countdown should be, reconcile storage and the
+   *  alarm slot to it, and deliver its sends. */
   private async reconcile() {
     const members = this.members();
-    let deadline = (await this.ctx.storage.get<number>("deadline")) ?? null;
-    if (members.length >= RANKED_MIN_PLAYERS && deadline == null) {
-      deadline = Date.now() + RANKED_COUNTDOWN_MS;
-      await this.ctx.storage.put("deadline", deadline);
-      await this.ctx.storage.setAlarm(deadline);
-    } else if (members.length < RANKED_MIN_PLAYERS && deadline != null) {
-      deadline = null;
-      await this.ctx.storage.delete("deadline");
-      await this.ctx.storage.deleteAlarm();
+    const stored = (await this.ctx.storage.get<number>("deadline")) ?? null;
+    const { deadline, sends } = queuePolicy({ members, deadline: stored, now: Date.now() });
+    if (deadline !== stored) {
+      if (deadline == null) {
+        await this.ctx.storage.delete("deadline");
+        await this.ctx.storage.deleteAlarm();
+      } else {
+        await this.ctx.storage.put("deadline", deadline);
+        await this.ctx.storage.setAlarm(deadline);
+      }
     }
-    members.forEach((member, index) =>
-      this.send(member.conn, {
-        t: "queue",
-        count: members.length,
-        position: index + 1,
-        deadline,
-      }),
-    );
+    members.forEach((member, index) => this.send(member.conn, sends[index]));
   }
 
-  /** Countdown hit zero: form the match from the head of the queue. */
+  /** Countdown hit zero: the policy picks the match, this host births it. */
   async onAlarm() {
     await this.ctx.storage.delete("deadline");
-    const members = this.members();
-    if (members.length >= RANKED_MIN_PLAYERS) {
-      const matched = members.slice(0, RANKED_MAX_PLAYERS);
+    const matched = formMatch(this.members());
+    if (matched) {
       const code = await this.freshCode();
       const roster: RankedRosterEntry[] = matched.map((m) => ({ userId: m.userId, name: m.name }));
       const ns = this.env.CoperoRankedRoom;
@@ -207,7 +187,7 @@ export class CoperoRankedQueue extends Server<Env> {
     }
     const { code } = await request.json<{ code: string }>();
     const holds = await this.ctx.storage.list<ActiveHold>({ prefix: "active:" });
-    const done = [...holds].filter(([, hold]) => hold.code === code).map(([key]) => key);
+    const done = releasedHoldKeys(holds, code);
     if (done.length) await this.ctx.storage.delete(done);
     return Response.json({ ok: true });
   }
