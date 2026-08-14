@@ -1,3 +1,4 @@
+import { getServerByName } from "partyserver";
 import { RANKED_SEASON } from "../src/ranked/protocol";
 import type {
   LeaderboardRow,
@@ -11,10 +12,9 @@ import { getUser } from "./auth";
 import type { Env } from "./env";
 
 // ---------------------------------------------------------------------------
-// The ranked read API. One hub endpoint feeds the whole hub page — the
-// session is resolved once and the queries go out as a single D1 batch — and
-// one match endpoint serves a finished room's rating changes. All writes
-// happen elsewhere (the ranked room's post-match batch); this only SELECTs.
+// The ranked read API. Public endpoints expose the queue count, leaderboard,
+// and finished match results. A session adds the caller's profile and history
+// to the hub response. All writes happen elsewhere.
 // ---------------------------------------------------------------------------
 
 const noStore = { headers: { "cache-control": "no-store" } };
@@ -23,10 +23,16 @@ const noStore = { headers: { "cache-control": "no-store" } };
 export async function handleRankedApi(request: Request, env: Env): Promise<Response | null> {
   const { pathname } = new URL(request.url);
   if (!pathname.startsWith("/api/ranked/")) return null;
+  if (pathname === "/api/ranked/queue-status") return queueStatus(env);
   if (pathname === "/api/ranked/hub") return hub(request, env);
   const match = pathname.match(/^\/api\/ranked\/match\/([A-Z2-9]{8})$/);
   if (match) return matchResults(env, match[1]);
   return new Response("Not found", { status: 404 });
+}
+
+async function queueStatus(env: Env): Promise<Response> {
+  const queue = await getServerByName(env.CoperoRankedQueue, "main");
+  return Response.json(await queue.getQueueStatus(), noStore);
 }
 
 async function hub(request: Request, env: Env): Promise<Response> {

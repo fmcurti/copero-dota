@@ -9,7 +9,11 @@ import {
   type ActiveHold,
   type QueueMember,
 } from "../src/ranked/queue";
-import { makeRankedCode, type QueueServerMsg } from "../src/ranked/protocol";
+import {
+  makeRankedCode,
+  type QueueServerMsg,
+  type RankedQueueStatus,
+} from "../src/ranked/protocol";
 import type { Env } from "./env";
 import {
   IDENTITY_ID_HEADER,
@@ -98,6 +102,11 @@ export class CoperoRankedQueue extends Server<Env> {
       if (st?.userId) entries.push({ ...st, conn });
     }
     return queueMembers(entries);
+  }
+
+  async getQueueStatus(): Promise<RankedQueueStatus> {
+    const deadline = (await this.ctx.storage.get<number>("deadline")) ?? null;
+    return { count: this.members().length, deadline };
   }
 
   /** Ask the policy what the countdown should be, reconcile storage and the
