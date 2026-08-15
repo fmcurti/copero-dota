@@ -138,8 +138,11 @@ function QueueSocketDriver() {
 // FINDING MATCH — the bottom-right finder.
 // ---------------------------------------------------------------------------
 
-/** The Dota finder, beat for beat: a cool translucent strip, the params row
- *  with the cyan clock, then the glowing headline beside the red ✕. */
+/** The Dota finder, beat for beat: two stacked panes of blue glass — the
+ *  lighter params band with its clock, then the darker band carrying the
+ *  glowing headline and the crimson ✕. While the fill countdown runs, the
+ *  headline flips to CONFIRMING MATCH (Dota's own wording) and the clock
+ *  shows the lock countdown instead of elapsed time. */
 function MatchFinder() {
   const startedAt = useQueueStore((s) => s.startedAt);
   const count = useQueueStore((s) => s.count);
@@ -148,42 +151,37 @@ function MatchFinder() {
   const leave = useQueueStore((s) => s.leave);
   const now = useNow(250);
   const fillSecs = fillDeadline != null ? secsUntil(fillDeadline, now) : null;
+  const confirming = fillSecs != null;
 
-  const params = notice ?? (
-    fillSecs != null
-      ? `Ranked match / locking in · ${fillSecs}`
-      : `Ranked match / Classic draft / ${count} of ${RANKED_MIN_PLAYERS}`
-  );
+  const params =
+    notice ??
+    (confirming
+      ? "Ranked match / Classic draft"
+      : `Ranked match / Classic draft / ${count} of ${RANKED_MIN_PLAYERS}`);
 
   return (
     <div className="beat-in fixed bottom-5 right-5 z-40">
-      <div className="finder w-[400px] max-w-[calc(100vw-2.5rem)] rounded-[3px]">
-        <div className="flex items-baseline justify-between gap-3 border-b border-[#8caac3]/15 px-4 pb-1.5 pt-2">
+      <div className="finder w-[430px] max-w-[calc(100vw-2.5rem)]">
+        <div className="finder-params flex items-baseline justify-between gap-3 px-4 pb-1 pt-1.5">
           <span
-            className={`plate min-w-0 truncate text-[11px] tracking-[0.2em] ${
-              notice ? "text-dire" : "text-[#8fa3b0]"
+            className={`plate min-w-0 truncate text-[11.5px] font-semibold tracking-[0.18em] ${
+              notice ? "text-dire" : "text-[#a8cbe2]"
             }`}
           >
             {params}
           </span>
-          <span className="font-mono text-[15px] tabular-nums leading-none text-[#9fd4e8]">
-            {fmtClock(now - startedAt)}
+          <span className="font-mono text-[16px] tabular-nums leading-none text-[#e6f4fc]">
+            {confirming ? fmtClock(fillSecs * 1000) : fmtClock(now - startedAt)}
           </span>
         </div>
-        <div className="flex items-center justify-between gap-4 px-4 py-3">
-          {fillSecs != null ? (
-            <div className="anim-urgent plate text-[27px] font-bold leading-none tracking-[0.14em] text-trophy">
-              Confirming match
-            </div>
-          ) : (
-            <div className="finding-glow plate text-[27px] font-bold leading-none tracking-[0.14em]">
-              Finding match
-            </div>
-          )}
+        <div className="finder-main flex items-center gap-4 px-4 py-2.5">
+          <div className="finding-glow plate min-w-0 flex-1 text-center text-[27px] font-bold leading-none tracking-[0.14em]">
+            {confirming ? "Confirming match" : "Finding match"}
+          </div>
           <button
             onClick={leave}
             aria-label="Cancel matchmaking"
-            className="cta-dota grid h-11 w-11 shrink-0 place-items-center rounded-[3px] text-xl font-bold leading-none"
+            className="finder-x grid h-10 w-10 shrink-0 place-items-center rounded-[2px] text-[20px] font-bold leading-none"
           >
             ✕
           </button>
