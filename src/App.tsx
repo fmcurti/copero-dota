@@ -1,5 +1,6 @@
 import { Link, Outlet, useLocation } from "react-router-dom";
 import AuthMenu from "./auth/AuthMenu";
+import QueueDock from "./pages/ranked/QueueDock";
 
 export default function App() {
   const { pathname } = useLocation();
@@ -38,6 +39,8 @@ export default function App() {
       <main className="mx-auto max-w-6xl px-4 py-8">
         <Outlet />
       </main>
+      {/* Ranked matchmaking floats over every page, as in Dota. */}
+      <QueueDock />
       <footer className="mx-auto max-w-6xl px-4 pb-8 text-center text-xs text-slate-dim">
         El Copero del Dota — a fan-made Dota 2 drafting roguelite, inspired by 322-0.app · stats from
         Datdota · not affiliated with Valve. Team and player names are informational and remain the

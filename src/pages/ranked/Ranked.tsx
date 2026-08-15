@@ -1,17 +1,16 @@
-import { useEffect, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import usePartySocket from "partysocket/react";
+import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { authClient } from "../../auth/client";
 import { Section } from "../../components/options";
-import { announce, preloadAnnouncer } from "../mp/announcer";
+import { preloadAnnouncer } from "../mp/announcer";
 import {
   RANKED_MAX_PLAYERS,
   RANKED_MIN_PLAYERS,
-  parseQueueServerMsg,
   type RankedHub,
 } from "../../ranked/protocol";
+import { fmtClock, useQueueStore } from "../../ranked/queueStore";
 import { STARTING_RATING } from "../../ranked/rating";
-import { secsUntil, useNow } from "../mp/useRoom";
+import { useNow } from "../mp/useRoom";
 
 // ---------------------------------------------------------------------------
 // The ranked hub (docs/RANKED.md): the queue, the ladder, and your history in
@@ -179,20 +178,29 @@ export default function Ranked() {
 
 // ---------------------------------------------------------------------------
 
+/** Join here; from then on the QueueDock (mounted app-wide) runs the show —
+ *  the finder, the ready check, the waiting grid all float over any page. */
 function QueuePanel() {
-  const [queued, setQueued] = useState(false);
+  const queued = useQueueStore((s) => s.queued);
+  const count = useQueueStore((s) => s.count);
+  const position = useQueueStore((s) => s.position);
+  const startedAt = useQueueStore((s) => s.startedAt);
+  const join = useQueueStore((s) => s.join);
+  const leave = useQueueStore((s) => s.leave);
+  const now = useNow(500);
+
   if (!queued) {
     return (
       <div className="w-full space-y-3 text-center">
         <button
           onClick={() => {
             // The click is the user gesture: warm the announcer so the
-            // match-found clip can play later, and ask to notify a hidden tab.
+            // match-found horn can play later, and ask to notify a hidden tab.
             preloadAnnouncer();
             if ("Notification" in window && Notification.permission === "default") {
               void Notification.requestPermission();
             }
-            setQueued(true);
+            join();
           }}
           className="cta-dota plate w-full rounded-lg py-4 text-lg font-bold tracking-widest"
         >
@@ -204,86 +212,21 @@ function QueuePanel() {
       </div>
     );
   }
-  return <QueueSocket onLeave={() => setQueued(false)} />;
-}
-
-/** The Dota match-found moment: the horn, and a notification if the tab is
- *  hidden (the countdown runs whether or not the player is looking). */
-function alertMatchFound() {
-  announce("matchFound");
-  if (document.hidden && "Notification" in window && Notification.permission === "granted") {
-    new Notification("Match found", {
-      body: "Your ranked draft starts in a few seconds.",
-      icon: "/favicon-180.png",
-    });
-  }
-}
-
-/** Mounted = queued. Unmounting closes the socket, which leaves the queue. */
-function QueueSocket({ onLeave }: { onLeave: () => void }) {
-  const navigate = useNavigate();
-  const [state, setState] = useState<{ count: number; position: number; deadline: number | null } | null>(null);
-  const [problem, setProblem] = useState<string | null>(null);
-  const now = useNow(250);
-  // Alert once per countdown, not per queue update; a cancelled countdown
-  // re-arms the alert for the next one.
-  const alerted = useRef(false);
-
-  usePartySocket({
-    party: "copero-ranked-queue",
-    room: "main",
-    onMessage(event) {
-      let decoded: unknown;
-      try {
-        decoded = JSON.parse(event.data as string);
-      } catch {
-        return;
-      }
-      const msg = parseQueueServerMsg(decoded);
-      if (!msg) return;
-      if (msg.t === "queue") {
-        if (msg.deadline != null && !alerted.current) alertMatchFound();
-        alerted.current = msg.deadline != null;
-        setState({ count: msg.count, position: msg.position, deadline: msg.deadline });
-        setProblem(null);
-      } else if (msg.t === "match") {
-        navigate(`/ranked/${msg.code}`);
-      } else {
-        setProblem(msg.msg);
-      }
-    },
-  });
-
-  const secs = state?.deadline != null ? secsUntil(state.deadline, now) : null;
 
   return (
     <div className="w-full space-y-3 text-center">
       <div className="panel w-full rounded-xl px-4 py-4">
-        {problem ? (
-          <p className="text-sm text-dire">{problem}</p>
-        ) : secs != null ? (
-          <>
-            <div className="plate font-mono text-4xl font-extrabold text-trophy">{secs}s</div>
-            <p className="mt-1 text-xs text-slate-mid">
-              Match found · {state!.count} players in · late joiners fill until start
-            </p>
-          </>
-        ) : state ? (
-          <>
-            <div className="plate font-mono text-4xl font-extrabold text-bone">
-              {state.count}/{RANKED_MIN_PLAYERS}
-            </div>
-            <p className="mt-1 text-xs text-slate-mid">
-              Waiting for players · #{state.position} in queue
-            </p>
-          </>
-        ) : (
-          <p className="text-sm text-slate-dim">Joining queue…</p>
-        )}
+        <div className="plate font-mono text-4xl font-extrabold text-bone">
+          {count}/{RANKED_MIN_PLAYERS}
+        </div>
+        <p className="mt-1 text-xs text-slate-mid">
+          Searching {fmtClock(now - startedAt)} · #{Math.max(position, 1)} in queue — the
+          finder follows you anywhere on the site
+        </p>
       </div>
       <div className="flex items-center justify-center gap-4">
         <button
-          onClick={onLeave}
+          onClick={leave}
           className="rounded-lg border border-ink-600 px-5 py-2 text-sm font-semibold text-slate-strong hover:border-slate-mid hover:text-bone"
         >
           Leave queue

@@ -1,8 +1,12 @@
 import {
+  IS_LOCAL_DEV,
+  RANKED_ACCEPT_MS,
   RANKED_COUNTDOWN_MS,
   RANKED_MAX_PLAYERS,
   RANKED_MIN_PLAYERS,
+  type DissolvedCheck,
   type QueueServerMsg,
+  type ReadyCheck,
 } from "./protocol";
 
 // ---------------------------------------------------------------------------
@@ -11,9 +15,12 @@ import {
 //
 // - queueMembers derives membership from connection facts: one member per
 //   account, arrival order.
-// - queuePolicy is the countdown rule: enough players and no countdown
-//   starts one, too few cancels it (places kept), late joiners never reset.
-// - formMatch takes the head of the queue when the countdown lands.
+// - queuePolicy is the whole matchmaking machine, reconciled on every event:
+//   the fill countdown (enough players arms it, too few cancels it, late
+//   joiners never reset it), the ready check it locks when it lands, and the
+//   check's three exits — all accepted forms the match, a leaver dissolves
+//   it, the deadline kicks whoever never accepted.
+// - acceptCheck applies one member's accept to a stored check.
 // - holdVerdict and releasedHoldKeys govern "seated in a live match can't
 //   queue": the hold, its TTL safety net, and its release.
 //
@@ -35,8 +42,9 @@ export interface ActiveHold {
 }
 
 /** Safety net for holds: they normally clear when the room records its
- *  result; this bounds a room that never does. */
-export const ACTIVE_HOLD_TTL_MS = 3 * 60 * 60 * 1000;
+ *  result; this bounds a room that never does. Local dev shortens it to a
+ *  minute — abandoned test matches must not lock accounts out for hours. */
+export const ACTIVE_HOLD_TTL_MS = IS_LOCAL_DEV ? 60_000 : 3 * 60 * 60 * 1000;
 
 /**
  * Membership from raw connection facts: one member per account (the oldest
@@ -52,48 +60,176 @@ export function queueMembers<T extends QueueMember>(entries: Iterable<T>): T[] {
   return [...byUser.values()].sort((a, b) => a.joinedAt - b.joinedAt);
 }
 
-export interface QueueFacts {
-  members: QueueMember[];
-  /** The countdown currently stored, or null when none is armed. */
-  deadline: number | null;
+export interface QueueFacts<T extends QueueMember = QueueMember> {
+  members: T[];
+  /** The fill countdown currently stored, or null when none is armed. */
+  fillDeadline: number | null;
+  /** The ready check currently stored, or null when none is live. */
+  check: ReadyCheck | null;
   now: number;
 }
 
-export interface QueueDecision {
-  /** What the stored countdown (and the alarm slot) should now hold. */
-  deadline: number | null;
-  /** One queue frame per member, parallel to facts.members. */
+export interface QueueDecision<T extends QueueMember = QueueMember> {
+  /** What the stored fill countdown should now hold. */
+  fillDeadline: number | null;
+  /** What the stored check should now hold. The alarm slot follows whichever
+   *  of the two deadlines exists (they are never both set). */
+  check: ReadyCheck | null;
+  /**
+   * Everyone accepted: seat exactly these members, in queue order. When set,
+   * sends is empty — the host births the room, delivers the match frames
+   * itself, and reconciles again for whoever is still waiting.
+   */
+  match: T[] | null;
+  /** userIds that sat out the ready check past its deadline. Their entry in
+   *  sends is the kick notice; the host closes them after delivering it. */
+  kicks: string[];
+  /** The check that failed this pass, when one did — its survivors' queue
+   *  frames carry the dissolved echo (the red squares), and the host maps
+   *  avatars against these userIds. */
+  dissolvedCheck: ReadyCheck | null;
+  /** One frame per member, parallel to facts.members. Ready frames and
+   *  dissolved echoes carry image: null placeholders — avatars are the
+   *  host's concern; it fills them in by index. */
   sends: QueueServerMsg[];
 }
 
 /**
- * The queue's one rule: enough players and no countdown starts one, too few
- * cancels it (the remaining members keep their place), and everyone hears
- * the new state. Joins during a countdown never reset it.
+ * The matchmaking machine, as one pure reconciliation:
+ *
+ * 1. A live check resolves first — all accepted forms the match, a missing
+ *    member (leave = decline) dissolves it with nobody punished, a passed
+ *    deadline dissolves it and kicks whoever never accepted. Accepted
+ *    survivors keep their joinedAt, so they stay at the front of the line.
+ * 2. With no live check, the fill rule runs over whoever remains: enough
+ *    players and no countdown arms one, too few cancels it (places kept),
+ *    joins during a countdown never reset it. When the countdown lands, the
+ *    head of the queue — capped at a full room — locks into a fresh check.
+ * 3. Everyone left over hears queue state. Members beyond a full room see no
+ *    fill deadline: the lock cannot take them.
  */
-export function queuePolicy({ members, deadline, now }: QueueFacts): QueueDecision {
-  let next = deadline;
-  if (members.length >= RANKED_MIN_PLAYERS && next == null) {
-    next = now + RANKED_COUNTDOWN_MS;
-  } else if (members.length < RANKED_MIN_PLAYERS && next != null) {
-    next = null;
+export function queuePolicy<T extends QueueMember>({
+  members,
+  fillDeadline,
+  check,
+  now,
+}: QueueFacts<T>): QueueDecision<T> {
+  let fill = fillDeadline;
+  let kicks: string[] = [];
+  /** The dead check plus who sank it — survivors get the red squares. */
+  let dissolved: { check: ReadyCheck; failed: string[] } | null = null;
+
+  if (check) {
+    const connected = new Set(members.map((m) => m.userId));
+    const hasAccepted = new Set(check.accepted);
+    const missing = check.userIds.filter((id) => !connected.has(id));
+    if (missing.length) {
+      dissolved = { check, failed: missing };
+      check = null;
+    } else if (check.userIds.every((id) => hasAccepted.has(id))) {
+      const byId = new Map(members.map((m) => [m.userId, m]));
+      return {
+        fillDeadline: null,
+        check: null,
+        match: check.userIds.map((id) => byId.get(id)!),
+        kicks: [],
+        dissolvedCheck: null,
+        sends: [],
+      };
+    } else if (now >= check.deadline) {
+      kicks = check.userIds.filter((id) => !hasAccepted.has(id));
+      dissolved = { check, failed: kicks };
+      check = null;
+    }
   }
-  const sends = members.map<QueueServerMsg>((_, index) => ({
-    t: "queue",
-    count: members.length,
-    position: index + 1,
-    deadline: next,
-  }));
-  return { deadline: next, sends };
+
+  const pool = members.filter((m) => !kicks.includes(m.userId));
+  const locked = new Set(check?.userIds ?? []);
+  const waiting = pool.filter((m) => !locked.has(m.userId));
+
+  if (check) {
+    fill = null; // a live check owns the clock
+  } else {
+    if (waiting.length >= RANKED_MIN_PLAYERS && fill == null) {
+      fill = now + RANKED_COUNTDOWN_MS;
+    } else if (waiting.length < RANKED_MIN_PLAYERS && fill != null) {
+      fill = null;
+    }
+    if (fill != null && now >= fill) {
+      check = {
+        userIds: waiting.slice(0, RANKED_MAX_PLAYERS).map((m) => m.userId),
+        accepted: [],
+        deadline: now + RANKED_ACCEPT_MS,
+      };
+      locked.clear();
+      for (const id of check.userIds) locked.add(id);
+      fill = null;
+    }
+  }
+
+  // The dead check's portrait, as its survivors should see it: who had
+  // accepted, and which slots sank it, in the order the grid showed.
+  const dissolvedEcho: DissolvedCheck | null = dissolved && {
+    players: dissolved.check.userIds.map((id) => ({
+      accepted: dissolved!.check.accepted.includes(id),
+      image: null,
+    })),
+    failed: dissolved.failed.map((id) => dissolved!.check.userIds.indexOf(id)),
+  };
+  const survivedCheck = new Set(
+    dissolved ? dissolved.check.userIds.filter((id) => !kicks.includes(id)) : [],
+  );
+
+  const waitingAfterLock = pool.filter((m) => !locked.has(m.userId));
+  const positions = new Map(waitingAfterLock.map((m, i) => [m.userId, i + 1]));
+  const sends = members.map<QueueServerMsg>((member) => {
+    if (kicks.includes(member.userId)) {
+      return {
+        t: "error",
+        code: "no-accept",
+        msg: "Match declined — you didn't accept in time.",
+      };
+    }
+    if (check && locked.has(member.userId)) {
+      return {
+        t: "ready",
+        deadline: check.deadline,
+        accepted: check.accepted.includes(member.userId),
+        players: check.userIds.map((id) => ({
+          accepted: check!.accepted.includes(id),
+          image: null,
+        })),
+      };
+    }
+    const position = positions.get(member.userId)!;
+    return {
+      t: "queue",
+      count: waitingAfterLock.length,
+      position,
+      // Beyond a full room the lock cannot take you — no false imminence.
+      deadline: position <= RANKED_MAX_PLAYERS ? fill : null,
+      ...(dissolvedEcho && survivedCheck.has(member.userId)
+        ? { dissolved: dissolvedEcho }
+        : {}),
+    };
+  });
+
+  return {
+    fillDeadline: fill,
+    check,
+    match: null,
+    kicks,
+    dissolvedCheck: dissolved?.check ?? null,
+    sends,
+  };
 }
 
-/**
- * The countdown landed: the head of the queue forms the match, capped at a
- * full room. Null when too few remain — the members stay queued and
- * queuePolicy re-arms a fresh countdown.
- */
-export function formMatch<T extends QueueMember>(members: T[]): T[] | null {
-  return members.length >= RANKED_MIN_PLAYERS ? members.slice(0, RANKED_MAX_PLAYERS) : null;
+/** Apply one member's accept. Returns the same reference when it changes
+ *  nothing (not locked, already accepted, no live check) so the host can
+ *  skip the storage write. */
+export function acceptCheck(check: ReadyCheck | null, userId: string): ReadyCheck | null {
+  if (!check || !check.userIds.includes(userId) || check.accepted.includes(userId)) return check;
+  return { ...check, accepted: [...check.accepted, userId] };
 }
 
 export type HoldVerdict =

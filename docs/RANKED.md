@@ -35,18 +35,41 @@ small — it only gathers players.
 - Membership is socket-based: presence requires an open connection to the
   queue; closing the page removes you. Deduped by Better Auth user ID, and a
   user seated in a live ranked match cannot queue.
-- **Minimum 4, maximum 8** players per match (rooms support 8).
-- At 4 players a **10-second countdown** starts. Late joiners fill remaining
-  seats freely during the countdown; joining does **not** reset or extend it.
+- **Minimum 4, maximum 8** players per match (rooms support 8). Local dev
+  (`npm run dev`) lowers the minimum to **2** so one person with two browser
+  tabs can exercise the whole flow, and shortens the abandoned-match queue
+  hold to **60s** (production: 3h); vitest and production builds keep the
+  real values.
+- At 4 players a **10-second fill countdown** starts. Late joiners fill toward
+  a full room during it; joining does **not** reset or extend it. Members a
+  full room could not take (position > 8) are shown no countdown.
 - If a leaver drops the queue below 4 mid-countdown, the countdown cancels and
   the remaining players stay queued (front of the line). No sub-4 ranked room
   can ever form.
-- **No queue timeout.** The queue screen permanently shows the current count
-  and a "play casual instead" escape hatch; nothing auto-redirects.
-- `GET /api/ranked/queue-status` publicly exposes only the live count and
-  countdown deadline. Reading it does not create a queue connection.
-- No accept/ready check: at zero the room is created and everyone is seated
-  directly. An AFK player is carried by the normal timeout/autopick machinery.
+- **Ready check (2026-08-15, replacing "no accept step"):** when the fill
+  countdown lands, the head of the queue — capped at 8 — is **locked into a
+  Dota-style ready check** with a **15-second accept window** (longer than
+  Dota's: a browser tab may be hidden). The roster is all-or-nothing:
+  - Everyone accepts → the room is created and everyone is seated. An AFK
+    player from then on is carried by the normal timeout/autopick machinery.
+  - **Decline = closing the socket** (the Decline button, the ✕, the tab).
+    Any locked member leaving dissolves the check; nobody else is punished,
+    and everyone still connected keeps their place at the front of the line.
+    Survivors' next queue frame carries a one-shot **dissolved echo** — the
+    dead check's grid with the failing slots marked — so the client can burn
+    the decliner's square red for a beat (Dota's MATCH DECLINED moment)
+    before returning to the finder.
+  - The deadline passing **kicks whoever never accepted** out of the queue
+    (no further penalty in v1); the accepted keep the front of the line and a
+    fresh fill countdown arms at once if enough remain.
+  - The client sends exactly one frame, `{"t":"accept"}`. Ready frames carry
+    the roster anonymized to accept-state plus avatar (user.image, size-capped
+    so 8 avatars stay under the DO's 1MiB websocket message limit).
+- **No queue timeout.** Matchmaking floats over every page (the bottom-right
+  finder, as in Dota) with a cancel ✕; nothing auto-redirects.
+- `GET /api/ranked/queue-status` publicly exposes only the live count and the
+  active deadline (fill or ready-check). Reading it does not create a queue
+  connection.
 - Per `docs/AUTH.md`: the queue (not a client flag) authorizes users and
   creates the ranked room.
 
