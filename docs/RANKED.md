@@ -37,7 +37,9 @@ small — it only gathers players.
   user seated in a live ranked match cannot queue.
 - **Minimum 4, maximum 8** players per match (rooms support 8). Local dev
   (`npm run dev`) lowers the minimum to **2** so one person with two browser
-  tabs can exercise the whole flow; vitest and production builds keep 4.
+  tabs can exercise the whole flow, and shortens the abandoned-match queue
+  hold to **60s** (production: 3h); vitest and production builds keep the
+  real values.
 - At 4 players a **10-second fill countdown** starts. Late joiners fill toward
   a full room during it; joining does **not** reset or extend it. Members a
   full room could not take (position > 8) are shown no countdown.

@@ -15,14 +15,14 @@ import { RANKED_MIN_PLAYERS as RANKED_MIN_BASE } from "./rating";
 // ---------------------------------------------------------------------------
 
 /**
- * Local dev runs the queue at 2 players so one person with two browser tabs
- * can exercise the whole ready-check flow. Vitest (MODE "test") and
- * production builds keep the real minimum — and the worker and the client are
+ * Local dev relaxes the matchmaking constants so one person with two browser
+ * tabs can exercise the whole ready-check flow. Vitest (MODE "test") and
+ * production builds keep the real values — and the worker and the client are
  * both Vite environments, so the two sides of the seam always agree.
  */
 const viteEnv = (import.meta as { env?: { DEV?: boolean; MODE?: string } }).env;
-export const RANKED_MIN_PLAYERS =
-  viteEnv?.DEV && viteEnv.MODE !== "test" ? 2 : RANKED_MIN_BASE;
+export const IS_LOCAL_DEV = Boolean(viteEnv?.DEV && viteEnv.MODE !== "test");
+export const RANKED_MIN_PLAYERS = IS_LOCAL_DEV ? 2 : RANKED_MIN_BASE;
 /** Late queue joiners fill toward a full room during the countdown. */
 export const RANKED_MAX_PLAYERS = MAX_SEATS;
 /** The countdown once the queue holds a match's worth of players. */

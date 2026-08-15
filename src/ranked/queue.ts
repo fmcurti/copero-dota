@@ -1,4 +1,5 @@
 import {
+  IS_LOCAL_DEV,
   RANKED_ACCEPT_MS,
   RANKED_COUNTDOWN_MS,
   RANKED_MAX_PLAYERS,
@@ -40,8 +41,9 @@ export interface ActiveHold {
 }
 
 /** Safety net for holds: they normally clear when the room records its
- *  result; this bounds a room that never does. */
-export const ACTIVE_HOLD_TTL_MS = 3 * 60 * 60 * 1000;
+ *  result; this bounds a room that never does. Local dev shortens it to a
+ *  minute — abandoned test matches must not lock accounts out for hours. */
+export const ACTIVE_HOLD_TTL_MS = IS_LOCAL_DEV ? 60_000 : 3 * 60 * 60 * 1000;
 
 /**
  * Membership from raw connection facts: one member per account (the oldest
