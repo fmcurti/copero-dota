@@ -1,5 +1,5 @@
 import { routePartykitRequest } from "partyserver";
-import { authCapabilities, getUser, handleAuth } from "./auth";
+import { authCapabilities, getUser, handleAuth, handleDevOtp } from "./auth";
 import { CoperoDirectory } from "./directory";
 import type { Env } from "./env";
 import { DIRECTORY_ID } from "./probe";
@@ -40,8 +40,12 @@ export default {
       return handleAuth(request, env);
     }
 
+    if (url.pathname === "/api/dev-otp") {
+      return handleDevOtp(request, env);
+    }
+
     if (url.pathname === "/api/auth-config") {
-      return Response.json(await authCapabilities(env), {
+      return Response.json(await authCapabilities(env, url.hostname), {
         headers: { "cache-control": "no-store" },
       });
     }

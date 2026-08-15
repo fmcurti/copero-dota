@@ -9,6 +9,7 @@ import Versus from "./pages/mp/Versus";
 import Room, { RankedRoom } from "./pages/mp/Room";
 import Watch from "./pages/mp/Watch";
 import Ranked from "./pages/ranked/Ranked";
+import Profile from "./pages/Profile";
 import "./index.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
@@ -27,6 +28,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
           <Route path="/mp/:code" element={<Room />} />
           <Route path="/ranked" element={<Ranked />} />
           <Route path="/ranked/:code" element={<RankedRoom />} />
+          <Route path="/profile" element={<Profile />} />
         </Route>
       </Routes>
     </HashRouter>
