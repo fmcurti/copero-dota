@@ -16,11 +16,11 @@ import {
 import { NO_DRAFT_CUES, draftCues } from "../../mp/roomView";
 import { synergyHints } from "../../mp/synergy";
 import type { ClientMsg, RoomSnapshot } from "../../mp/protocol";
+import { useServerNow } from "../../time/useServerClock";
 import { announce, preloadAnnouncer } from "./announcer";
 import { ChatPanel } from "./ChatPanel";
 import { SoundControl } from "./SoundControl";
 import { TurnTimer } from "./TurnTimer";
-import { useNow } from "./useRoom";
 
 function ordinal(n: number): string {
   const s = ["th", "st", "nd", "rd"];
@@ -276,7 +276,7 @@ export function DraftView({
   const [denyArmed, setDenyArmed] = useState(false);
   useEffect(() => setDenyArmed(false), [d.packSeq, d.turnSeat, myPackKey]);
 
-  const now = useNow(250);
+  const now = useServerNow(250);
   // Turbo has no shared clock — only my own pack's deadline matters to me.
   const myDeadline = turbo
     ? mySeat >= 0
@@ -284,7 +284,9 @@ export function DraftView({
       : null
     : d.turnDeadline;
   const secsLeft =
-    myDeadline != null ? Math.max(0, Math.ceil((myDeadline - now) / 1000)) : null;
+    myDeadline != null && now != null
+      ? Math.max(0, Math.ceil((myDeadline - now) / 1000))
+      : null;
 
   // Dota announcer. WHEN to speak is pure (draftCues in src/mp/roomView.ts);
   // this effect just plays what it says, on every render — the cue state

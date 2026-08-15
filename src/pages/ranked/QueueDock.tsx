@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import usePartySocket from "partysocket/react";
 import { announce } from "../mp/announcer";
 import { secsUntil, useNow } from "../mp/useRoom";
+import { useServerNow } from "../../time/useServerClock";
 import {
   RANKED_ACCEPT_MS,
   RANKED_MIN_PLAYERS,
@@ -183,8 +184,10 @@ function MatchFinder() {
   const fillDeadline = useQueueStore((s) => s.fillDeadline);
   const notice = useQueueStore((s) => s.notice);
   const leave = useQueueStore((s) => s.leave);
-  const now = useNow(250);
-  const fillSecs = fillDeadline != null ? secsUntil(fillDeadline, now) : null;
+  const localNow = useNow(250);
+  const serverNow = useServerNow(250);
+  const fillSecs =
+    fillDeadline != null && serverNow != null ? secsUntil(fillDeadline, serverNow) : null;
 
   const params = notice ?? (
     fillSecs != null
@@ -204,7 +207,7 @@ function MatchFinder() {
             {params}
           </span>
           <span className="font-mono text-[15px] tabular-nums leading-none text-[#9fd4e8]">
-            {fmtClock(now - startedAt)}
+            {fmtClock(localNow - startedAt)}
           </span>
         </div>
         <div className="flex items-center justify-between gap-4 px-4 py-3">
@@ -302,11 +305,13 @@ function CheckShell({
 function CheckStage({ check, matched }: { check: CheckView | null; matched: MatchedView | null }) {
   const accept = useQueueStore((s) => s.accept);
   const leave = useQueueStore((s) => s.leave);
-  const now = useNow(200);
+  const now = useServerNow(200);
   const showGrid = matched != null || (check?.accepted ?? false);
   const barFrac = matched
     ? 1
-    : Math.min(1, Math.max(0, (check?.deadline ?? 0) - now) / RANKED_ACCEPT_MS);
+    : now == null
+      ? 1
+      : Math.min(1, Math.max(0, (check?.deadline ?? 0) - now) / RANKED_ACCEPT_MS);
   const players = matched?.players ?? check?.players ?? [];
   const acceptedCount = players.filter((p) => p.accepted).length;
 

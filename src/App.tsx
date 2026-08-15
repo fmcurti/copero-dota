@@ -1,8 +1,10 @@
 import { Link, Outlet, useLocation } from "react-router-dom";
 import AuthMenu from "./auth/AuthMenu";
 import QueueDock from "./pages/ranked/QueueDock";
+import { useServerClockSync } from "./time/useServerClock";
 
 export default function App() {
+  useServerClockSync();
   const { pathname } = useLocation();
   const navLink = (to: string, label: string) => (
     <Link

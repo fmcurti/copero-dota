@@ -50,6 +50,13 @@ export default {
       });
     }
 
+    if (url.pathname === "/api/time") {
+      return Response.json(
+        { now: Date.now() },
+        { headers: { "cache-control": "no-store" } },
+      );
+    }
+
     if (url.pathname === "/api/rooms") {
       const ns = env.CoperoDirectory;
       const data = await ns.get(ns.idFromName(DIRECTORY_ID)).list();

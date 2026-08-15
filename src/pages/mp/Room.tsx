@@ -27,9 +27,10 @@ import type { RoomView } from "../../mp/roomView";
 import { WinPhrasesEditor } from "../../components/WinPhrases";
 import { authClient } from "../../auth/client";
 import type { RankedMatchPlayerRow } from "../../ranked/protocol";
+import { useServerNow } from "../../time/useServerClock";
 import { ChatPanel } from "./ChatPanel";
 import { DraftView } from "./DraftView";
-import { secsUntil, useNow, useRoomHost } from "./useRoom";
+import { secsUntil, useRoomHost } from "./useRoom";
 
 /**
  * The ranked room page: same Room, different party and identity. The session
@@ -552,8 +553,8 @@ function LobbyView({
 
 /** Seconds until a ranked clock fires, ticking in place. */
 function RankedCountdown({ at, label }: { at: number | null; label: string }) {
-  const now = useNow(250);
-  if (at == null) return null;
+  const now = useServerNow(250);
+  if (at == null || now == null) return null;
   return (
     <div className="plate mt-3 inline-block rounded-sm border border-trophy/40 px-2 py-0.5 text-xs tracking-widest text-trophy">
       {label} {secsUntil(at, now)}s

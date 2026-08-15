@@ -1,4 +1,4 @@
-import { useNow } from "./useRoom";
+import { useServerNow } from "../../time/useServerClock";
 
 const R = 34;
 const CIRC = 2 * Math.PI * R;
@@ -8,7 +8,8 @@ const CIRC = 2 * Math.PI * R;
  * Bone → trophy gold at 10s → dire red at 5s.
  */
 export function TurnTimer({ deadline, totalSecs }: { deadline: number; totalSecs: number }) {
-  const now = useNow(100);
+  const now = useServerNow(100);
+  if (now == null) return null;
   const msLeft = Math.max(0, deadline - now);
   const secs = Math.ceil(msLeft / 1000);
   const frac = Math.min(1, msLeft / (totalSecs * 1000));
