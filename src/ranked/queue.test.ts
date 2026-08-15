@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   ACTIVE_HOLD_TTL_MS,
-  formMatch,
+  acceptCheck,
   holdVerdict,
   queueMembers,
   queuePolicy,
@@ -9,9 +9,11 @@ import {
   type QueueMember,
 } from "./queue";
 import {
+  RANKED_ACCEPT_MS,
   RANKED_COUNTDOWN_MS,
   RANKED_MAX_PLAYERS,
   RANKED_MIN_PLAYERS,
+  type ReadyCheck,
 } from "./protocol";
 
 const NOW = 1_700_000_000_000;
@@ -25,6 +27,14 @@ const member = (userId: string, joinedAt: number, name = userId): QueueMember =>
 /** n members joined a second apart, oldest first. */
 const lineup = (n: number): QueueMember[] =>
   Array.from({ length: n }, (_, i) => member(`u${i}`, NOW + i * 1000));
+
+const ids = (n: number): string[] => lineup(n).map((m) => m.userId);
+
+const checkOf = (userIds: string[], accepted: string[] = [], deadline = NOW + RANKED_ACCEPT_MS): ReadyCheck => ({
+  userIds,
+  accepted,
+  deadline,
+});
 
 describe("queue membership", () => {
   it("keeps one member per account — the oldest connection wins", () => {
@@ -48,14 +58,16 @@ describe("queue membership", () => {
   });
 });
 
-describe("the countdown rule", () => {
+describe("the fill countdown", () => {
   it("stays unarmed below the minimum", () => {
-    const { deadline, sends } = queuePolicy({
+    const { fillDeadline, check, sends } = queuePolicy({
       members: lineup(RANKED_MIN_PLAYERS - 1),
-      deadline: null,
+      fillDeadline: null,
+      check: null,
       now: NOW,
     });
-    expect(deadline).toBeNull();
+    expect(fillDeadline).toBeNull();
+    expect(check).toBeNull();
     expect(sends).toEqual(
       lineup(RANKED_MIN_PLAYERS - 1).map((_, i) => ({
         t: "queue",
@@ -67,12 +79,13 @@ describe("the countdown rule", () => {
   });
 
   it("arms at the minimum and tells everyone", () => {
-    const { deadline, sends } = queuePolicy({
+    const { fillDeadline, sends } = queuePolicy({
       members: lineup(RANKED_MIN_PLAYERS),
-      deadline: null,
+      fillDeadline: null,
+      check: null,
       now: NOW,
     });
-    expect(deadline).toBe(NOW + RANKED_COUNTDOWN_MS);
+    expect(fillDeadline).toBe(NOW + RANKED_COUNTDOWN_MS);
     for (const send of sends) {
       expect(send).toMatchObject({ t: "queue", deadline: NOW + RANKED_COUNTDOWN_MS });
     }
@@ -80,42 +93,188 @@ describe("the countdown rule", () => {
 
   it("never resets a running countdown for a late joiner", () => {
     const armed = NOW + RANKED_COUNTDOWN_MS;
-    const { deadline } = queuePolicy({
+    const { fillDeadline } = queuePolicy({
       members: lineup(RANKED_MIN_PLAYERS + 2),
-      deadline: armed,
+      fillDeadline: armed,
+      check: null,
       now: NOW + 7000,
     });
-    expect(deadline).toBe(armed);
+    expect(fillDeadline).toBe(armed);
   });
 
   it("cancels when the queue drops below the minimum — places kept", () => {
-    const { deadline, sends } = queuePolicy({
+    const { fillDeadline, sends } = queuePolicy({
       members: lineup(RANKED_MIN_PLAYERS - 1),
-      deadline: NOW + RANKED_COUNTDOWN_MS,
+      fillDeadline: NOW + RANKED_COUNTDOWN_MS,
+      check: null,
       now: NOW + 3000,
     });
-    expect(deadline).toBeNull();
+    expect(fillDeadline).toBeNull();
     expect(sends.map((s) => (s.t === "queue" ? s.position : -1))).toEqual([1, 2, 3]);
+  });
+
+  it("shows no deadline to members a full room cannot take", () => {
+    const armed = NOW + RANKED_COUNTDOWN_MS;
+    const { sends } = queuePolicy({
+      members: lineup(RANKED_MAX_PLAYERS + 2),
+      fillDeadline: armed,
+      check: null,
+      now: NOW + 1000,
+    });
+    expect(
+      sends.map((s) => (s.t === "queue" ? s.deadline : "not-queue")),
+    ).toEqual([
+      ...Array.from({ length: RANKED_MAX_PLAYERS }, () => armed),
+      null,
+      null,
+    ]);
   });
 });
 
-describe("match formation", () => {
-  it("refuses below the minimum — the members stay queued", () => {
-    expect(formMatch(lineup(RANKED_MIN_PLAYERS - 1))).toBeNull();
+describe("locking the ready check", () => {
+  it("locks the head of the queue, capped at a full room, when the fill lands", () => {
+    const { fillDeadline, check, sends, match } = queuePolicy({
+      members: lineup(RANKED_MAX_PLAYERS + 2),
+      fillDeadline: NOW,
+      check: null,
+      now: NOW,
+    });
+    expect(match).toBeNull();
+    expect(fillDeadline).toBeNull();
+    expect(check).toEqual({
+      userIds: ids(RANKED_MAX_PLAYERS),
+      accepted: [],
+      deadline: NOW + RANKED_ACCEPT_MS,
+    });
+    // The locked hear the ready call; the two left over queue at the front.
+    for (const send of sends.slice(0, RANKED_MAX_PLAYERS)) {
+      expect(send).toEqual({
+        t: "ready",
+        deadline: NOW + RANKED_ACCEPT_MS,
+        accepted: false,
+        players: ids(RANKED_MAX_PLAYERS).map(() => ({ accepted: false, image: null })),
+      });
+    }
+    expect(sends.slice(RANKED_MAX_PLAYERS)).toEqual([
+      { t: "queue", count: 2, position: 1, deadline: null },
+      { t: "queue", count: 2, position: 2, deadline: null },
+    ]);
   });
 
-  it("forms exactly at the minimum", () => {
-    const matched = formMatch(lineup(RANKED_MIN_PLAYERS));
-    expect(matched?.map((m) => m.userId)).toEqual(
-      lineup(RANKED_MIN_PLAYERS).map((m) => m.userId),
+  it("a live check owns the clock — no fill runs alongside it", () => {
+    const { fillDeadline, check } = queuePolicy({
+      members: lineup(RANKED_MIN_PLAYERS * 2),
+      fillDeadline: null,
+      check: checkOf(ids(RANKED_MIN_PLAYERS)),
+      now: NOW,
+    });
+    expect(fillDeadline).toBeNull();
+    expect(check).toEqual(checkOf(ids(RANKED_MIN_PLAYERS)));
+  });
+});
+
+describe("accepting", () => {
+  it("applies a locked member's accept exactly once, and nobody else's", () => {
+    const check = checkOf(ids(RANKED_MIN_PLAYERS));
+    const once = acceptCheck(check, "u1");
+    expect(once?.accepted).toEqual(["u1"]);
+    expect(acceptCheck(once, "u1")).toBe(once);
+    expect(acceptCheck(check, "stranger")).toBe(check);
+    expect(acceptCheck(null, "u1")).toBeNull();
+  });
+
+  it("broadcasts every accept to the whole check — each hears their own state", () => {
+    const { sends } = queuePolicy({
+      members: lineup(RANKED_MIN_PLAYERS),
+      fillDeadline: null,
+      check: checkOf(ids(RANKED_MIN_PLAYERS), ["u1", "u2"]),
+      now: NOW,
+    });
+    const players = ids(RANKED_MIN_PLAYERS).map((id) => ({
+      accepted: id === "u1" || id === "u2",
+      image: null,
+    }));
+    expect(sends.map((s) => (s.t === "ready" ? s.accepted : "not-ready"))).toEqual([
+      false,
+      true,
+      true,
+      false,
+    ]);
+    for (const send of sends) expect(send).toMatchObject({ t: "ready", players });
+  });
+
+  it("everyone accepted: the match is exactly the locked roster, in order", () => {
+    const members = lineup(RANKED_MIN_PLAYERS + 1);
+    const { match, check, fillDeadline, kicks, sends } = queuePolicy({
+      members,
+      fillDeadline: null,
+      check: checkOf(ids(RANKED_MIN_PLAYERS), ids(RANKED_MIN_PLAYERS)),
+      now: NOW,
+    });
+    expect(match?.map((m) => m.userId)).toEqual(ids(RANKED_MIN_PLAYERS));
+    expect(check).toBeNull();
+    expect(fillDeadline).toBeNull();
+    expect(kicks).toEqual([]);
+    // The host births the room and reconciles again for the one left waiting.
+    expect(sends).toEqual([]);
+  });
+});
+
+describe("a check dissolving", () => {
+  it("a leaver (decline) dissolves it — nobody kicked, survivors re-fill", () => {
+    // u1 closed their socket mid-check; the rest are still enough to re-arm.
+    const members = lineup(RANKED_MIN_PLAYERS + 1).filter((m) => m.userId !== "u1");
+    const { check, fillDeadline, kicks, sends } = queuePolicy({
+      members,
+      fillDeadline: null,
+      check: checkOf(ids(RANKED_MIN_PLAYERS), ["u0", "u2"]),
+      now: NOW + 5000,
+    });
+    expect(check).toBeNull();
+    expect(kicks).toEqual([]);
+    expect(fillDeadline).toBe(NOW + 5000 + RANKED_COUNTDOWN_MS);
+    expect(sends.map((s) => s.t)).toEqual(members.map(() => "queue"));
+  });
+
+  it("the deadline kicks whoever never accepted; the accepted keep the front", () => {
+    const locked = ids(RANKED_MIN_PLAYERS + 2);
+    const accepted = locked.slice(0, RANKED_MIN_PLAYERS);
+    const deadline = NOW + RANKED_ACCEPT_MS;
+    const { check, fillDeadline, kicks, sends } = queuePolicy({
+      members: lineup(RANKED_MIN_PLAYERS + 2),
+      fillDeadline: null,
+      check: checkOf(locked, accepted, deadline),
+      now: deadline,
+    });
+    expect(check).toBeNull();
+    expect(kicks).toEqual(locked.slice(RANKED_MIN_PLAYERS));
+    // Enough sat through it that a fresh countdown arms for them at once.
+    expect(fillDeadline).toBe(deadline + RANKED_COUNTDOWN_MS);
+    expect(sends.slice(0, RANKED_MIN_PLAYERS)).toEqual(
+      accepted.map((_, i) => ({
+        t: "queue",
+        count: RANKED_MIN_PLAYERS,
+        position: i + 1,
+        deadline: deadline + RANKED_COUNTDOWN_MS,
+      })),
     );
+    for (const send of sends.slice(RANKED_MIN_PLAYERS)) {
+      expect(send).toMatchObject({ t: "error", code: "no-accept" });
+    }
   });
 
-  it("takes the head of the queue, capped at a full room", () => {
-    const matched = formMatch(lineup(RANKED_MAX_PLAYERS + 3));
-    expect(matched).toHaveLength(RANKED_MAX_PLAYERS);
-    expect(matched?.[0].userId).toBe("u0");
-    expect(matched?.at(-1)?.userId).toBe(`u${RANKED_MAX_PLAYERS - 1}`);
+  it("too few survivors after a kick: no countdown, places kept", () => {
+    const locked = ids(RANKED_MIN_PLAYERS);
+    const deadline = NOW + RANKED_ACCEPT_MS;
+    const { fillDeadline, kicks, sends } = queuePolicy({
+      members: lineup(RANKED_MIN_PLAYERS),
+      fillDeadline: null,
+      check: checkOf(locked, ["u0"], deadline),
+      now: deadline + 1,
+    });
+    expect(kicks).toEqual(locked.slice(1));
+    expect(fillDeadline).toBeNull();
+    expect(sends[0]).toEqual({ t: "queue", count: 1, position: 1, deadline: null });
   });
 });
 

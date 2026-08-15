@@ -197,6 +197,62 @@ body::before {
   .cta-pulse {
     animation: cta-pulse 2.6s ease-in-out infinite;
   }
+
+  /* The ready check's ACCEPT — Dota's sea-green call, same forge as cta-dota.
+     The one green button in the app: it answers the Radiant burst behind it. */
+  .cta-accept {
+    background: linear-gradient(180deg, #4e8f71 0%, #35664f 52%, #234439 100%);
+    color: #e9f4ec;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+    border: 1px solid rgba(158, 216, 184, 0.55);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.22),
+      0 0 18px rgba(124, 196, 106, 0.22);
+    transition: filter 0.15s ease, transform 0.15s ease, box-shadow 0.3s ease;
+  }
+  .cta-accept:hover:not(:disabled) {
+    filter: brightness(1.14);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.28),
+      0 0 26px rgba(124, 196, 106, 0.4);
+  }
+  .cta-accept:active:not(:disabled) {
+    transform: translateY(1px);
+  }
+
+  /* The finder strip — the one cool-tinted surface in the app, because it is
+     Dota's own artifact: translucent steel-blue over whatever page you're on. */
+  .finder {
+    background: linear-gradient(180deg, rgba(26, 34, 42, 0.95) 0%, rgba(15, 20, 26, 0.95) 100%);
+    border: 1px solid rgba(120, 150, 175, 0.22);
+    box-shadow:
+      inset 0 1px 0 rgba(170, 205, 230, 0.08),
+      0 12px 32px rgba(0, 0, 0, 0.55);
+  }
+
+  /* The finder's headline — Dota's pale searching glow, slowly breathing. */
+  .finding-glow {
+    color: #cfe0ec;
+    animation: finding-glow 2.8s ease-in-out infinite;
+  }
+
+  /* The ready check's backdrop — the green smoke burst behind the dialog. */
+  .ready-bloom {
+    pointer-events: none;
+    background:
+      radial-gradient(46vmax 34vmax at 50% 44%, rgba(124, 196, 106, 0.3), transparent 62%),
+      radial-gradient(70vmax 52vmax at 50% 50%, rgba(96, 168, 82, 0.15), transparent 70%);
+    animation: bloom-breathe 4s ease-in-out infinite;
+  }
+
+  /* An accepted seat in the waiting grid — lit Radiant, framing the avatar. */
+  .seat-accepted {
+    background: linear-gradient(180deg, #79c167 0%, #4e8f3f 55%, #3a6b2f 100%);
+    border: 1px solid rgba(180, 230, 160, 0.75);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.25),
+      0 0 14px rgba(124, 196, 106, 0.45);
+  }
 }
 
 /* Focus — the element's own edge warms to gold with a soft bloom, like a
@@ -597,6 +653,30 @@ body::before {
   50% {
     box-shadow: 0 0 12px rgba(226, 87, 70, 1);
     opacity: 0.55;
+  }
+}
+
+@keyframes finding-glow {
+  0%,
+  100% {
+    text-shadow: 0 0 8px rgba(140, 190, 230, 0.25);
+    opacity: 0.92;
+  }
+  50% {
+    text-shadow: 0 0 16px rgba(160, 205, 240, 0.55);
+    opacity: 1;
+  }
+}
+
+@keyframes bloom-breathe {
+  0%,
+  100% {
+    opacity: 0.85;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.03);
   }
 }
 
