@@ -74,7 +74,7 @@ export default function QueueDock() {
  *  hot), and a notification if the tab is hidden (the accept window runs
  *  whether or not the player is looking). */
 function alertMatchFound() {
-  announce("matchFound", 0.6);
+  announce("matchFound", 0.45);
   notifyHidden("Match found", "Your ranked draft is ready — accept now.");
 }
 
