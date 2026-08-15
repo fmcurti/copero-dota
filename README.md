@@ -35,9 +35,9 @@ player names are informational and remain the property of their owners.
 
 ## Optional accounts
 
-Better Auth provides optional Google and email-code sign-in for future ranked
-features; casual play does not require an account. See [docs/AUTH.md](docs/AUTH.md)
-for the design and production setup. For local auth work, copy
+Better Auth provides optional Google, email-code, and email + password sign-in
+for ranked features. Passwords are optional, and casual play does not require
+an account. See [docs/AUTH.md](docs/AUTH.md) for the design and production setup. For local auth work, copy
 `.dev.vars.example` to `.dev.vars`, fill the provider values, and apply the
 local D1 migration:
 

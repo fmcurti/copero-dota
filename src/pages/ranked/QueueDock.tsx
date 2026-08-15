@@ -70,11 +70,11 @@ export default function QueueDock() {
 // leaves the queue (and declines a live check).
 // ---------------------------------------------------------------------------
 
-/** The Dota match-found moment: the horn (eased off — the clip is mastered
- *  hot), and a notification if the tab is hidden (the accept window runs
- *  whether or not the player is looking). */
+/** The Dota match-found moment: the horn (tamed by the announcer's per-clip
+ *  gain — the clip is mastered hot), and a notification if the tab is hidden
+ *  (the accept window runs whether or not the player is looking). */
 function alertMatchFound() {
-  announce("matchFound", 0.45);
+  announce("matchFound");
   notifyHidden("Match found", "Your ranked draft is ready — accept now.");
 }
 

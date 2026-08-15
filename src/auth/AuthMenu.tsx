@@ -13,10 +13,15 @@ import { NAME_MAX, sanitizeName } from "../mp/protocol";
 
 interface AuthCapabilities {
   google: boolean;
+  emailOtp: boolean;
   password: boolean;
 }
 
-const DEFAULT_CAPABILITIES: AuthCapabilities = { google: false, password: false };
+const DEFAULT_CAPABILITIES: AuthCapabilities = {
+  google: false,
+  emailOtp: false,
+  password: false,
+};
 
 const onLocalhost = () => ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
 
@@ -28,12 +33,15 @@ export default function AuthMenu() {
   const { data: session, isPending } = authClient.useSession();
   const [open, setOpen] = useState(false);
   const [capabilities, setCapabilities] = useState(DEFAULT_CAPABILITIES);
-  // The dialog is a tiny machine: pick a method, or prove the inbox. A
-  // register always passes through "verify"; a password sign-in only lands
-  // there when the account never finished verifying (the server re-sends).
+  // The dialog is a tiny machine: pick an independent sign-in method, or
+  // prove the inbox. OTP remains a complete passwordless sign-in/sign-up path.
+  // Password registration passes through "verify"; a password sign-in only
+  // lands there when the account never finished verifying (the server re-sends).
   // "reset" sets a new password by code — including the FIRST password of an
   // account from the email-code era, which has none to forget.
   const [mode, setMode] = useState<"signin" | "register" | "verify" | "reset">("signin");
+  const [signInMethod, setSignInMethod] = useState<"otp" | "password">("otp");
+  const [otpSent, setOtpSent] = useState(false);
   const [resetSent, setResetSent] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -65,6 +73,8 @@ export default function AuthMenu() {
   const close = () => {
     setOpen(false);
     setMode("signin");
+    setSignInMethod("otp");
+    setOtpSent(false);
     setResetSent(false);
     setPassword("");
     setOtp("");
@@ -75,7 +85,18 @@ export default function AuthMenu() {
 
   const switchMode = (next: "signin" | "register" | "reset") => {
     setMode(next);
+    setOtpSent(false);
     setResetSent(false);
+    setProblem(null);
+    setNotice(null);
+    setDevOtp(null);
+  };
+
+  const switchSignInMethod = (next: "otp" | "password") => {
+    setSignInMethod(next);
+    setOtpSent(false);
+    setOtp("");
+    setPassword("");
     setProblem(null);
     setNotice(null);
     setDevOtp(null);
@@ -139,6 +160,37 @@ export default function AuthMenu() {
     } else {
       setProblem(result.error.message ?? "Could not sign in.");
     }
+  };
+
+  const submitOtpSignIn = async (event: FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setProblem(null);
+    if (!otpSent) {
+      const result = await authClient.emailOtp.sendVerificationOtp({
+        email,
+        type: "sign-in",
+      });
+      setBusy(false);
+      if (result.error) {
+        setProblem(result.error.message ?? "Could not send the code.");
+      } else {
+        setOtpSent(true);
+        setOtp("");
+        setNotice(`We emailed a 6-digit sign-in code to ${email}.`);
+        fetchDevCode(email);
+      }
+      return;
+    }
+
+    const result = await authClient.signIn.emailOtp({
+      email,
+      otp,
+      name: email.split("@")[0],
+    });
+    setBusy(false);
+    if (result.error) setProblem(result.error.message ?? "That code is invalid or expired.");
+    else close();
   };
 
   const submitRegister = async (event: FormEvent) => {
@@ -250,6 +302,9 @@ export default function AuthMenu() {
     </button>
   );
 
+  const activeSignInMethod =
+    signInMethod === "otp" && !capabilities.emailOtp ? "password" : signInMethod;
+
   // Rendered at a stable top-level position (like the log-out hook), never
   // inside a header branch: session refetches and pending flips must not
   // remount the dialog mid-form. The Pudge hook drags the whole sign-in plate
@@ -302,81 +357,189 @@ export default function AuthMenu() {
               </button>
             )}
 
-            {(mode === "signin" || mode === "register") && capabilities.google && capabilities.password && (
+            {(mode === "signin" || mode === "register") &&
+              capabilities.google &&
+              (capabilities.emailOtp || capabilities.password) && (
               <div className="my-4 flex items-center gap-3 text-xs uppercase tracking-widest text-slate-dim">
                 <span className="h-px flex-1 bg-ink-700" /> or <span className="h-px flex-1 bg-ink-700" />
               </div>
             )}
 
-            {(mode === "signin" || mode === "register") && capabilities.password && (
+            {(mode === "signin" || mode === "register") &&
+              (capabilities.emailOtp || capabilities.password) && (
               <>
-                <div className="relative mb-4 flex rounded-lg border border-ink-700 bg-ink-950/60 p-1">
-                  {/* the active pill slides between the two tabs */}
-                  <span
-                    aria-hidden
-                    className="pointer-events-none absolute inset-y-1 left-1 w-[calc(50%-0.25rem)] rounded-md bg-ink-800 shadow-[inset_0_1px_0_rgba(233,229,218,0.08)] transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
-                    style={{ transform: mode === "register" ? "translateX(100%)" : "translateX(0)" }}
-                  />
-                  {(["signin", "register"] as const).map((tab) => (
-                    <button
-                      key={tab}
-                      type="button"
-                      onClick={() => switchMode(tab)}
-                      className={`plate relative z-10 flex-1 rounded-md px-3 py-1.5 text-xs tracking-widest transition-colors duration-200 ${
-                        mode === tab ? "text-bone" : "text-slate-dim hover:text-slate-strong"
-                      }`}
-                    >
-                      {tab === "signin" ? "Sign in" : "Create account"}
-                    </button>
-                  ))}
-                </div>
+                {capabilities.emailOtp && capabilities.password && (
+                  <div className="relative mb-4 flex rounded-lg border border-ink-700 bg-ink-950/60 p-1">
+                    <span
+                      aria-hidden
+                      className="pointer-events-none absolute inset-y-1 left-1 w-[calc(50%-0.25rem)] rounded-md bg-ink-800 shadow-[inset_0_1px_0_rgba(233,229,218,0.08)] transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                      style={{ transform: mode === "register" ? "translateX(100%)" : "translateX(0)" }}
+                    />
+                    {(["signin", "register"] as const).map((tab) => (
+                      <button
+                        key={tab}
+                        type="button"
+                        onClick={() => switchMode(tab)}
+                        className={`plate relative z-10 flex-1 rounded-md px-3 py-1.5 text-xs tracking-widest transition-colors duration-200 ${
+                          mode === tab ? "text-bone" : "text-slate-dim hover:text-slate-strong"
+                        }`}
+                      >
+                        {tab === "signin" ? "Sign in" : "Create with password"}
+                      </button>
+                    ))}
+                  </div>
+                )}
 
                 {mode === "signin" ? (
-                  <form
-                    key="signin"
-                    onSubmit={(event) => void submitSignIn(event)}
-                    className="beat-in space-y-3"
-                  >
-                    <label className={FIELD_LABEL}>
-                      Email
-                      <input
-                        type="email"
-                        required
-                        autoComplete="email"
-                        disabled={busy}
-                        value={email}
-                        onChange={(event) => setEmail(event.target.value)}
-                        className={FIELD_INPUT}
-                      />
-                    </label>
-                    <label className={FIELD_LABEL}>
-                      Password
-                      <input
-                        type="password"
-                        required
-                        autoComplete="current-password"
-                        disabled={busy}
-                        value={password}
-                        onChange={(event) => setPassword(event.target.value)}
-                        className={FIELD_INPUT}
-                      />
-                    </label>
-                    <button
-                      type="submit"
-                      disabled={busy}
-                      className="cta-dota w-full px-4 py-2.5 font-display text-base font-bold uppercase tracking-wider disabled:opacity-50"
-                    >
-                      {busy ? "Working…" : "Sign in"}
-                    </button>
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => switchMode("reset")}
-                      className="w-full text-xs text-slate-dim hover:text-slate-strong"
-                    >
-                      Forgot password? (or never set one)
-                    </button>
-                  </form>
+                  <div className="space-y-3">
+                    {capabilities.emailOtp && capabilities.password && (
+                      <div className="grid grid-cols-2 gap-2" aria-label="Email sign-in method">
+                        {(["otp", "password"] as const).map((method) => (
+                          <button
+                            key={method}
+                            type="button"
+                            disabled={busy}
+                            onClick={() => switchSignInMethod(method)}
+                            className={`border px-3 py-2 text-xs uppercase tracking-widest transition ${
+                              activeSignInMethod === method
+                                ? "border-trophy-dim bg-ink-800 text-bone"
+                                : "border-ink-700 bg-ink-950/60 text-slate-dim hover:text-slate-strong"
+                            }`}
+                          >
+                            {method === "otp" ? "Email code" : "Password"}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {activeSignInMethod === "otp" && capabilities.emailOtp ? (
+                      <form
+                        key="otp-signin"
+                        onSubmit={(event) => void submitOtpSignIn(event)}
+                        className="beat-in space-y-3"
+                      >
+                        <label className={FIELD_LABEL}>
+                          Email
+                          <input
+                            type="email"
+                            required
+                            autoComplete="email"
+                            disabled={otpSent || busy}
+                            value={email}
+                            onChange={(event) => setEmail(event.target.value)}
+                            className={FIELD_INPUT}
+                          />
+                        </label>
+                        {otpSent && (
+                          <label className={FIELD_LABEL}>
+                            Six-digit code
+                            <input
+                              inputMode="numeric"
+                              autoComplete="one-time-code"
+                              autoFocus
+                              required
+                              minLength={6}
+                              maxLength={6}
+                              value={otp}
+                              onChange={(event) => setOtp(event.target.value.replace(/\D/g, ""))}
+                              className="mt-1.5 w-full border border-ink-600 bg-ink-950 px-3 py-2 text-center font-mono text-xl tracking-[0.4em] text-bone"
+                            />
+                          </label>
+                        )}
+                        {otpSent && notice && <p className="text-xs text-slate-mid">{notice}</p>}
+                        {!otpSent && (
+                          <p className="text-xs text-slate-dim">
+                            No password needed. If the email is new, its first valid code creates the account.
+                          </p>
+                        )}
+                        <button
+                          type="submit"
+                          disabled={busy}
+                          className="cta-dota w-full px-4 py-2.5 font-display text-base font-bold uppercase tracking-wider disabled:opacity-50"
+                        >
+                          {busy ? "Working…" : otpSent ? "Verify code" : "Email me a code"}
+                        </button>
+                        {otpSent && (
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => {
+                              setOtpSent(false);
+                              setOtp("");
+                              setProblem(null);
+                              setNotice(null);
+                              setDevOtp(null);
+                            }}
+                            className="w-full text-xs text-slate-dim hover:text-slate-strong"
+                          >
+                            Use a different email
+                          </button>
+                        )}
+                        {otpSent && onLocalhost() && (
+                          <p className="text-xs text-slate-dim">
+                            {devOtp ? (
+                              <>
+                                local dev inbox — your code is{" "}
+                                <span className="font-mono text-base tracking-widest text-bone">{devOtp}</span>
+                              </>
+                            ) : (
+                              <>
+                                local dev: the code is printed in the <code>npm run dev</code> terminal
+                              </>
+                            )}
+                          </p>
+                        )}
+                      </form>
+                    ) : (
+                      <form
+                        key="password-signin"
+                        onSubmit={(event) => void submitSignIn(event)}
+                        className="beat-in space-y-3"
+                      >
+                        <label className={FIELD_LABEL}>
+                          Email
+                          <input
+                            type="email"
+                            required
+                            autoComplete="email"
+                            disabled={busy}
+                            value={email}
+                            onChange={(event) => setEmail(event.target.value)}
+                            className={FIELD_INPUT}
+                          />
+                        </label>
+                        <label className={FIELD_LABEL}>
+                          Password
+                          <input
+                            type="password"
+                            required
+                            autoComplete="current-password"
+                            disabled={busy}
+                            value={password}
+                            onChange={(event) => setPassword(event.target.value)}
+                            className={FIELD_INPUT}
+                          />
+                        </label>
+                        <button
+                          type="submit"
+                          disabled={busy}
+                          className="cta-dota w-full px-4 py-2.5 font-display text-base font-bold uppercase tracking-wider disabled:opacity-50"
+                        >
+                          {busy ? "Working…" : "Sign in with password"}
+                        </button>
+                        {capabilities.emailOtp && (
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => switchMode("reset")}
+                            className="w-full text-xs text-slate-dim hover:text-slate-strong"
+                          >
+                            Forgot password?
+                          </button>
+                        )}
+                      </form>
+                    )}
+                  </div>
                 ) : (
                   <form
                     key="register"
@@ -596,7 +759,7 @@ export default function AuthMenu() {
               </form>
             )}
 
-            {!capabilities.google && !capabilities.password && (
+            {!capabilities.google && !capabilities.emailOtp && !capabilities.password && (
               <p className="border border-ink-700 bg-ink-950/60 p-3 text-sm text-slate-mid">
                 Sign-in providers have not been configured yet. Casual play is still available.
               </p>

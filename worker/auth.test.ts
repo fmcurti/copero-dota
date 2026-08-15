@@ -20,21 +20,25 @@ describe("auth environment", () => {
       AUTH_EMAIL_FROM: "El Copero <auth@example.com>",
     };
 
-    await expect(authCapabilities(env)).resolves.toEqual({ google: true, password: true });
+    await expect(authCapabilities(env)).resolves.toEqual({
+      google: true,
+      emailOtp: true,
+      password: true,
+    });
     expect(resendGet).toHaveBeenCalledOnce();
   });
 
   it("still accepts local and per-Worker string secrets", async () => {
     await expect(
       authCapabilities({ AUTH_DB: authDb, GOOGLE_CLIENT_ID: "id", GOOGLE_CLIENT_SECRET: "secret" }),
-    ).resolves.toEqual({ google: true, password: false });
+    ).resolves.toEqual({ google: true, emailOtp: false, password: true });
   });
 
   it("treats an unpopulated local Secrets Store as unavailable", async () => {
     const missing = { get: vi.fn().mockRejectedValue(new Error('Secret "RESEND_API_KEY" not found')) };
     await expect(
       authCapabilities({ AUTH_DB: authDb, RESEND_API_KEY_STORE: missing }),
-    ).resolves.toEqual({ google: false, password: false });
+    ).resolves.toEqual({ google: false, emailOtp: false, password: true });
   });
 
   it("keeps the dev inbox off outside localhost or once email is real", async () => {
@@ -56,14 +60,16 @@ describe("auth environment", () => {
     await expect(local.json()).resolves.toEqual({ otp: null });
   });
 
-  it("offers password accounts on localhost without a provider (terminal inbox)", async () => {
+  it("offers email codes on localhost and keeps password sign-in provider-independent", async () => {
     await expect(authCapabilities({ AUTH_DB: authDb }, "localhost")).resolves.toEqual({
       google: false,
+      emailOtp: true,
       password: true,
     });
     await expect(authCapabilities({ AUTH_DB: authDb }, "dotero.fmcurti.com.ar")).resolves.toEqual({
       google: false,
-      password: false,
+      emailOtp: false,
+      password: true,
     });
   });
 });

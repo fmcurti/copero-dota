@@ -442,8 +442,7 @@ export default function HookModal({
           state.th = (Math.random() - 0.5) * 0.24;
           state.w = (Math.random() - 0.5) * 2.4;
           if (!state.closed) {
-            // The grab is felt, not heard: sparks + shake, no clang — only the
-            // throw whoosh carries the moment.
+            audio?.impact();
             state.shake = 1;
             spawnSparks(park.x, Math.min(park.y, H - 6));
           }
@@ -480,6 +479,7 @@ export default function HookModal({
           const off = Math.hypot(home.x - state.s.x, home.y - state.s.y);
           if ((state.t > 0.32 && speed < 70 && off < 12) || state.t > 1.0) {
             state.phase = "hang";
+            audio?.retractStop();
             arm();
           }
         } else if (flakesRef.current) {
