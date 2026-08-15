@@ -43,10 +43,12 @@ export function setAnnouncerMuted(muted: boolean) {
   localStorage.setItem(MUTED_KEY, muted ? "1" : "0");
 }
 
-export function announce(name: keyof typeof CLIPS) {
+/** gain scales this one line relative to the player's announcer volume —
+ *  for clips mastered hotter than the rest (the match-found horn). */
+export function announce(name: keyof typeof CLIPS, gain = 1) {
   if (getAnnouncerMuted()) return;
   const a = clip(name);
-  a.volume = getAnnouncerVolume();
+  a.volume = Math.min(1, Math.max(0, getAnnouncerVolume() * gain));
   a.currentTime = 0;
   // Browsers block autoplay until the user first interacts — stay silent then.
   void a.play().catch(() => {});

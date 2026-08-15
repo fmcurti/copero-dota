@@ -59,10 +59,11 @@ export default function QueueDock() {
 // leaves the queue (and declines a live check).
 // ---------------------------------------------------------------------------
 
-/** The Dota match-found moment: the horn, and a notification if the tab is
- *  hidden (the accept window runs whether or not the player is looking). */
+/** The Dota match-found moment: the horn (eased off — the clip is mastered
+ *  hot), and a notification if the tab is hidden (the accept window runs
+ *  whether or not the player is looking). */
 function alertMatchFound() {
-  announce("matchFound");
+  announce("matchFound", 0.6);
   notifyHidden("Match found", "Your ranked draft is ready — accept now.");
 }
 
@@ -172,7 +173,7 @@ function MatchFinder() {
         <div className="flex items-center justify-between gap-4 px-4 py-3">
           {fillSecs != null ? (
             <div className="anim-urgent plate text-[27px] font-bold leading-none tracking-[0.14em] text-trophy">
-              Match imminent
+              Confirming match
             </div>
           ) : (
             <div className="finding-glow plate text-[27px] font-bold leading-none tracking-[0.14em]">
