@@ -4,6 +4,7 @@ import {
   RANKED_COUNTDOWN_MS,
   RANKED_MAX_PLAYERS,
   RANKED_MIN_PLAYERS,
+  type DissolvedCheck,
   type QueueServerMsg,
   type ReadyCheck,
 } from "./protocol";
@@ -83,9 +84,13 @@ export interface QueueDecision<T extends QueueMember = QueueMember> {
   /** userIds that sat out the ready check past its deadline. Their entry in
    *  sends is the kick notice; the host closes them after delivering it. */
   kicks: string[];
-  /** One frame per member, parallel to facts.members. Ready frames carry
-   *  image: null placeholders — avatars are the host's concern; it fills
-   *  them in by index against check.userIds. */
+  /** The check that failed this pass, when one did — its survivors' queue
+   *  frames carry the dissolved echo (the red squares), and the host maps
+   *  avatars against these userIds. */
+  dissolvedCheck: ReadyCheck | null;
+  /** One frame per member, parallel to facts.members. Ready frames and
+   *  dissolved echoes carry image: null placeholders — avatars are the
+   *  host's concern; it fills them in by index. */
   sends: QueueServerMsg[];
 }
 
@@ -111,11 +116,15 @@ export function queuePolicy<T extends QueueMember>({
 }: QueueFacts<T>): QueueDecision<T> {
   let fill = fillDeadline;
   let kicks: string[] = [];
+  /** The dead check plus who sank it — survivors get the red squares. */
+  let dissolved: { check: ReadyCheck; failed: string[] } | null = null;
 
   if (check) {
     const connected = new Set(members.map((m) => m.userId));
     const hasAccepted = new Set(check.accepted);
-    if (!check.userIds.every((id) => connected.has(id))) {
+    const missing = check.userIds.filter((id) => !connected.has(id));
+    if (missing.length) {
+      dissolved = { check, failed: missing };
       check = null;
     } else if (check.userIds.every((id) => hasAccepted.has(id))) {
       const byId = new Map(members.map((m) => [m.userId, m]));
@@ -124,10 +133,12 @@ export function queuePolicy<T extends QueueMember>({
         check: null,
         match: check.userIds.map((id) => byId.get(id)!),
         kicks: [],
+        dissolvedCheck: null,
         sends: [],
       };
     } else if (now >= check.deadline) {
       kicks = check.userIds.filter((id) => !hasAccepted.has(id));
+      dissolved = { check, failed: kicks };
       check = null;
     }
   }
@@ -155,6 +166,19 @@ export function queuePolicy<T extends QueueMember>({
       fill = null;
     }
   }
+
+  // The dead check's portrait, as its survivors should see it: who had
+  // accepted, and which slots sank it, in the order the grid showed.
+  const dissolvedEcho: DissolvedCheck | null = dissolved && {
+    players: dissolved.check.userIds.map((id) => ({
+      accepted: dissolved!.check.accepted.includes(id),
+      image: null,
+    })),
+    failed: dissolved.failed.map((id) => dissolved!.check.userIds.indexOf(id)),
+  };
+  const survivedCheck = new Set(
+    dissolved ? dissolved.check.userIds.filter((id) => !kicks.includes(id)) : [],
+  );
 
   const waitingAfterLock = pool.filter((m) => !locked.has(m.userId));
   const positions = new Map(waitingAfterLock.map((m, i) => [m.userId, i + 1]));
@@ -184,10 +208,20 @@ export function queuePolicy<T extends QueueMember>({
       position,
       // Beyond a full room the lock cannot take you — no false imminence.
       deadline: position <= RANKED_MAX_PLAYERS ? fill : null,
+      ...(dissolvedEcho && survivedCheck.has(member.userId)
+        ? { dissolved: dissolvedEcho }
+        : {}),
     };
   });
 
-  return { fillDeadline: fill, check, match: null, kicks, sends };
+  return {
+    fillDeadline: fill,
+    check,
+    match: null,
+    kicks,
+    dissolvedCheck: dissolved?.check ?? null,
+    sends,
+  };
 }
 
 /** Apply one member's accept. Returns the same reference when it changes

@@ -55,6 +55,10 @@ small — it only gathers players.
   - **Decline = closing the socket** (the Decline button, the ✕, the tab).
     Any locked member leaving dissolves the check; nobody else is punished,
     and everyone still connected keeps their place at the front of the line.
+    Survivors' next queue frame carries a one-shot **dissolved echo** — the
+    dead check's grid with the failing slots marked — so the client can burn
+    the decliner's square red for a beat (Dota's MATCH DECLINED moment)
+    before returning to the finder.
   - The deadline passing **kicks whoever never accepted** out of the queue
     (no further penalty in v1); the accepted keep the front of the line and a
     fresh fill countdown arms at once if enough remain.

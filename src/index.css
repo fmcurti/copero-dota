@@ -253,6 +253,15 @@ body::before {
       inset 0 1px 0 rgba(255, 255, 255, 0.25),
       0 0 14px rgba(124, 196, 106, 0.45);
   }
+
+  /* A seat that sank the check — declined, left, or slept through it. */
+  .seat-failed {
+    background: linear-gradient(180deg, #c05043 0%, #8a3328 55%, #63201a 100%);
+    border: 1px solid rgba(240, 165, 145, 0.7);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.22),
+      0 0 14px rgba(226, 87, 70, 0.5);
+  }
 }
 
 /* Focus — the element's own edge warms to gold with a soft bloom, like a

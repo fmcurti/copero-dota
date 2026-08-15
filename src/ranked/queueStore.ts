@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { QueueServerMsg, ReadySlot } from "./protocol";
+import type { DissolvedCheck, QueueServerMsg, ReadySlot } from "./protocol";
 
 // ---------------------------------------------------------------------------
 // Client-side queue state, held globally so matchmaking follows the player
@@ -27,6 +27,9 @@ interface QueueStore {
   /** The fill countdown's deadline — "match imminent" — when armed. */
   fillDeadline: number | null;
   check: CheckView | null;
+  /** A check we sat in just failed — held briefly so the grid can show the
+   *  red squares before the finder takes back over. */
+  dissolved: DissolvedCheck | null;
   /** Transient feedback: kicked, replaced by another tab, check dissolved… */
   notice: string | null;
 
@@ -35,6 +38,7 @@ interface QueueStore {
   leave: () => void;
   accept: () => void;
   clearNotice: () => void;
+  clearDissolved: () => void;
 
   // ---- driver wiring ----
   applyQueue: (msg: Extract<QueueServerMsg, { t: "queue" }>) => void;
@@ -62,6 +66,7 @@ export const useQueueStore = create<QueueStore>((set, get) => ({
   position: 0,
   fillDeadline: null,
   check: null,
+  dissolved: null,
   notice: null,
 
   join: () =>
@@ -72,10 +77,11 @@ export const useQueueStore = create<QueueStore>((set, get) => ({
       position: 0,
       fillDeadline: null,
       check: null,
+      dissolved: null,
       notice: null,
     }),
 
-  leave: () => set({ queued: false, fillDeadline: null, check: null }),
+  leave: () => set({ queued: false, fillDeadline: null, check: null, dissolved: null }),
 
   accept: () => {
     const { check } = get();
@@ -85,6 +91,7 @@ export const useQueueStore = create<QueueStore>((set, get) => ({
   },
 
   clearNotice: () => set({ notice: null }),
+  clearDissolved: () => set({ dissolved: null }),
 
   applyQueue: (msg) =>
     set((state) => ({
@@ -92,15 +99,18 @@ export const useQueueStore = create<QueueStore>((set, get) => ({
       position: msg.position,
       fillDeadline: msg.deadline,
       check: null,
-      // A queue frame while we sat in a check means it dissolved under us —
-      // someone declined or left. Say so; silence reads as a glitch.
-      notice: state.check ? "A player failed to accept" : state.notice,
+      // A dissolved echo (or a queue frame while we sat in a check) means
+      // the check failed under us. Show the red squares, and say so —
+      // silence reads as a glitch.
+      dissolved: msg.dissolved ?? state.dissolved,
+      notice: msg.dissolved || state.check ? "A player failed to accept" : state.notice,
     })),
 
   applyReady: (msg) =>
     set((state) => ({
       fillDeadline: null,
       notice: null,
+      dissolved: null,
       check: {
         deadline: msg.deadline,
         // Keep an optimistic accept through broadcasts that predate ours.
@@ -115,13 +125,14 @@ export const useQueueStore = create<QueueStore>((set, get) => ({
   // sending one, and locally that close doesn't always surface. The frame
   // itself is the goodbye: drop to idle and show why.
   applyError: (msg) =>
-    set({ queued: false, fillDeadline: null, check: null, notice: msg.msg }),
+    set({ queued: false, fillDeadline: null, check: null, dissolved: null, notice: msg.msg }),
 
   drop: (notice) =>
     set((state) => ({
       queued: false,
       fillDeadline: null,
       check: null,
+      dissolved: null,
       notice: notice ?? state.notice,
     })),
 

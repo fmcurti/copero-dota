@@ -7,6 +7,7 @@ import {
   RANKED_ACCEPT_MS,
   RANKED_MIN_PLAYERS,
   parseQueueServerMsg,
+  type DissolvedCheck,
   type ReadySlot,
 } from "../../ranked/protocol";
 import { fmtClock, useQueueStore, type CheckView } from "../../ranked/queueStore";
@@ -28,6 +29,7 @@ import { fmtClock, useQueueStore, type CheckView } from "../../ranked/queueStore
 export default function QueueDock() {
   const queued = useQueueStore((s) => s.queued);
   const check = useQueueStore((s) => s.check);
+  const dissolved = useQueueStore((s) => s.dissolved);
   const notice = useQueueStore((s) => s.notice);
 
   // Feedback expires on its own — the finder line and the idle toast both.
@@ -37,10 +39,19 @@ export default function QueueDock() {
     return () => clearTimeout(timer);
   }, [notice]);
 
+  // The failed check's red squares hold the stage for a beat, then the
+  // finder takes back over.
+  useEffect(() => {
+    if (!dissolved) return;
+    const timer = setTimeout(() => useQueueStore.getState().clearDissolved(), 2400);
+    return () => clearTimeout(timer);
+  }, [dissolved]);
+
   return (
     <>
       {queued && <QueueSocketDriver />}
-      {queued && !check && <MatchFinder />}
+      {queued && !check && dissolved && <DissolvedPanel dissolved={dissolved} />}
+      {queued && !check && !dissolved && <MatchFinder />}
       {queued && check && !check.accepted && <ReadyModal check={check} />}
       {queued && check && check.accepted && <WaitingPanel check={check} />}
       {!queued && notice && (
@@ -289,7 +300,48 @@ function WaitingPanel({ check }: { check: CheckView }) {
   );
 }
 
-function ReadySeat({ slot }: { slot: ReadySlot }) {
+/** The check's epitaph, Dota style: the grid frozen for a beat with the
+ *  slots that sank it burning red, then the finder takes back over. */
+function DissolvedPanel({ dissolved }: { dissolved: DissolvedCheck }) {
+  const accepted = dissolved.players.filter((p) => p.accepted).length;
+  return (
+    <div aria-live="assertive">
+      <CheckShell eyebrow="Match declined" deadline={0} labelId="dissolved-title">
+        <div className="flex flex-wrap justify-center gap-2 px-6 pt-6">
+          {dissolved.players.map((slot, i) => (
+            <ReadySeat key={i} slot={slot} failed={dissolved.failed.includes(i)} />
+          ))}
+        </div>
+        <div className="px-6 pb-4 pt-3 text-right">
+          <span className="plate text-sm tracking-[0.2em] text-dire">
+            <span className="font-mono tabular-nums">
+              {accepted} / {dissolved.players.length}
+            </span>{" "}
+            accepted
+          </span>
+        </div>
+      </CheckShell>
+    </div>
+  );
+}
+
+/** failed wins over accepted: a player can accept and then walk out. */
+function ReadySeat({ slot, failed }: { slot: ReadySlot; failed?: boolean }) {
+  if (failed) {
+    return (
+      <div className="anim-dot-pop seat-failed grid h-14 w-14 place-items-center overflow-hidden rounded-md p-[2px]">
+        {slot.image ? (
+          <img
+            src={slot.image}
+            alt=""
+            className="h-full w-full rounded-[4px] object-cover opacity-80"
+          />
+        ) : (
+          <Silhouette className="h-8 w-8 text-[#f8e3dc]" />
+        )}
+      </div>
+    );
+  }
   if (!slot.accepted) {
     return (
       <div className="grid h-14 w-14 place-items-center rounded-md border border-ink-700 bg-ink-900">

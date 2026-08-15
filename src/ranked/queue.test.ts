@@ -221,10 +221,11 @@ describe("accepting", () => {
 });
 
 describe("a check dissolving", () => {
-  it("a leaver (decline) dissolves it — nobody kicked, survivors re-fill", () => {
+  it("a leaver (decline) dissolves it — survivors re-fill and see the red slot", () => {
     // u1 closed their socket mid-check; the rest are still enough to re-arm.
+    // u4 was never locked — no red squares for them.
     const members = lineup(RANKED_MIN_PLAYERS + 1).filter((m) => m.userId !== "u1");
-    const { check, fillDeadline, kicks, sends } = queuePolicy({
+    const { check, fillDeadline, kicks, dissolvedCheck, sends } = queuePolicy({
       members,
       fillDeadline: null,
       check: checkOf(ids(RANKED_MIN_PLAYERS), ["u0", "u2"]),
@@ -232,8 +233,24 @@ describe("a check dissolving", () => {
     });
     expect(check).toBeNull();
     expect(kicks).toEqual([]);
+    expect(dissolvedCheck).toEqual(checkOf(ids(RANKED_MIN_PLAYERS), ["u0", "u2"]));
     expect(fillDeadline).toBe(NOW + 5000 + RANKED_COUNTDOWN_MS);
-    expect(sends.map((s) => s.t)).toEqual(members.map(() => "queue"));
+    const dissolved = {
+      players: [
+        { accepted: true, image: null },
+        { accepted: false, image: null },
+        { accepted: true, image: null },
+        { accepted: false, image: null },
+      ],
+      failed: [1],
+    };
+    // members order: u0, u2, u3 (locked survivors), u4 (was only waiting).
+    expect(sends.map((s) => (s.t === "queue" ? s.dissolved : "not-queue"))).toEqual([
+      dissolved,
+      dissolved,
+      dissolved,
+      undefined,
+    ]);
   });
 
   it("the deadline kicks whoever never accepted; the accepted keep the front", () => {
@@ -256,6 +273,11 @@ describe("a check dissolving", () => {
         count: RANKED_MIN_PLAYERS,
         position: i + 1,
         deadline: deadline + RANKED_COUNTDOWN_MS,
+        // The kicked pair are the red squares of the echo.
+        dissolved: {
+          players: locked.map((id) => ({ accepted: accepted.includes(id), image: null })),
+          failed: [RANKED_MIN_PLAYERS, RANKED_MIN_PLAYERS + 1],
+        },
       })),
     );
     for (const send of sends.slice(RANKED_MIN_PLAYERS)) {
@@ -274,7 +296,8 @@ describe("a check dissolving", () => {
     });
     expect(kicks).toEqual(locked.slice(1));
     expect(fillDeadline).toBeNull();
-    expect(sends[0]).toEqual({ t: "queue", count: 1, position: 1, deadline: null });
+    expect(sends[0]).toMatchObject({ t: "queue", count: 1, position: 1, deadline: null });
+    expect(sends[0].t === "queue" && sends[0].dissolved?.failed).toEqual([1, 2, 3]);
   });
 });
 

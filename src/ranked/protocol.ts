@@ -129,14 +129,32 @@ export interface ReadySlot {
   image: string | null;
 }
 
+/** A check's last portrait, sent to its survivors when it fails: the roster
+ *  as it stood, plus which slots sank it — the red squares. */
+export interface DissolvedCheck {
+  players: ReadySlot[];
+  /** Indexes into players: the decliner/leaver, or everyone the deadline
+   *  kicked. */
+  failed: number[];
+}
+
 // ---- the queue's wire protocol ----
 // Presence IS the message: joining the socket joins the queue, closing it
 // leaves — closing during a ready check is how a match is declined. The one
 // frame a client ever sends is the accept.
 
 export type QueueServerMsg =
-  /** Queue state for this member. `deadline` is the fill countdown's epoch ms. */
-  | { t: "queue"; count: number; position: number; deadline: number | null }
+  /** Queue state for this member. `deadline` is the fill countdown's epoch
+   *  ms. `dissolved` rides along exactly once when a check this member sat
+   *  in just failed — the client shows the red slots, then this same
+   *  frame's queue state takes over. */
+  | {
+      t: "queue";
+      count: number;
+      position: number;
+      deadline: number | null;
+      dissolved?: DissolvedCheck;
+    }
   /** You are locked in a ready check. `accepted` is your own state; `players`
    *  is the whole roster in queue order, anonymized to accept + avatar. */
   | { t: "ready"; deadline: number; accepted: boolean; players: ReadySlot[] }
@@ -148,25 +166,53 @@ export type QueueServerMsg =
 
 export type QueueClientMsg = { t: "accept" };
 
+function parseReadySlots(value: unknown): ReadySlot[] | null {
+  if (!Array.isArray(value)) return null;
+  const players: ReadySlot[] = [];
+  for (const slot of value as unknown[]) {
+    if (!isRecord(slot) || typeof slot.accepted !== "boolean") return null;
+    if (slot.image !== null && typeof slot.image !== "string") return null;
+    players.push({ accepted: slot.accepted, image: slot.image });
+  }
+  return players;
+}
+
 /** Validate an untrusted decoded queue frame at the protocol seam. */
 export function parseQueueServerMsg(value: unknown): QueueServerMsg | null {
   if (!isRecord(value)) return null;
   if (value.t === "queue") {
-    return isId(value.count) &&
-      isId(value.position) &&
-      (value.deadline === null || isId(value.deadline))
-      ? { t: "queue", count: value.count, position: value.position, deadline: value.deadline }
-      : null;
+    if (
+      !isId(value.count) ||
+      !isId(value.position) ||
+      (value.deadline !== null && !isId(value.deadline))
+    ) {
+      return null;
+    }
+    const msg: QueueServerMsg = {
+      t: "queue",
+      count: value.count,
+      position: value.position,
+      deadline: value.deadline,
+    };
+    if (value.dissolved !== undefined) {
+      if (!isRecord(value.dissolved)) return null;
+      const players = parseReadySlots(value.dissolved.players);
+      const failed = value.dissolved.failed;
+      if (
+        !players ||
+        !Array.isArray(failed) ||
+        !failed.every((i) => isId(i) && i < players.length)
+      ) {
+        return null;
+      }
+      msg.dissolved = { players, failed: failed as number[] };
+    }
+    return msg;
   }
   if (value.t === "ready") {
     if (!isId(value.deadline) || typeof value.accepted !== "boolean") return null;
-    if (!Array.isArray(value.players)) return null;
-    const players: ReadySlot[] = [];
-    for (const slot of value.players as unknown[]) {
-      if (!isRecord(slot) || typeof slot.accepted !== "boolean") return null;
-      if (slot.image !== null && typeof slot.image !== "string") return null;
-      players.push({ accepted: slot.accepted, image: slot.image });
-    }
+    const players = parseReadySlots(value.players);
+    if (!players) return null;
     return { t: "ready", deadline: value.deadline, accepted: value.accepted, players };
   }
   if (value.t === "match") {

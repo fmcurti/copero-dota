@@ -180,9 +180,11 @@ export class CoperoRankedQueue extends Server<Env> {
       return;
     }
 
-    // Avatars ride the ready frames; the policy left null placeholders in
-    // check order, so the fill-in is by index against check.userIds.
+    // Avatars ride the ready frames and the dissolved echo; the policy left
+    // null placeholders in check order, so the fill-in is by index against
+    // the (live or just-dissolved) check's userIds.
     const images = d.check ? await this.imagesFor(d.check) : null;
+    const echoImages = d.dissolvedCheck ? await this.imagesFor(d.dissolvedCheck) : null;
     members.forEach((member, index) => {
       let msg = d.sends[index];
       if (msg.t === "ready" && images) {
@@ -192,6 +194,17 @@ export class CoperoRankedQueue extends Server<Env> {
             ...slot,
             image: images.get(d.check!.userIds[i]) ?? null,
           })),
+        };
+      } else if (msg.t === "queue" && msg.dissolved && echoImages) {
+        msg = {
+          ...msg,
+          dissolved: {
+            ...msg.dissolved,
+            players: msg.dissolved.players.map((slot, i) => ({
+              ...slot,
+              image: echoImages.get(d.dissolvedCheck!.userIds[i]) ?? null,
+            })),
+          },
         };
       }
       this.send(member.conn, msg);
