@@ -1,5 +1,7 @@
 import { betterAuth } from "better-auth";
+import { APIError } from "better-auth/api";
 import { emailOTP } from "better-auth/plugins";
+import { DEFAULT_NAME, sanitizeName } from "../src/mp/protocol";
 import { sendAuthOtp, type AuthEmailEnv } from "./email";
 
 export interface AuthEnv extends AuthEmailEnv {
@@ -37,6 +39,54 @@ export class AuthenticationRequired extends Error {
 
 const DEV_SECRET = "local-development-only-secret-change-me";
 
+// ---------------------------------------------------------------------------
+// User-write gate. Better Auth's /update-user endpoint is live for any signed
+// in caller, so the profile fields it can touch are validated here — at the
+// database hook, where every path (profile page, OAuth profile sync, email
+// sign-up) converges — not in the UI.
+// ---------------------------------------------------------------------------
+
+/** Longest accepted avatar payload: a 256px JPEG data URL is ~15–55k chars. */
+export const MAX_AVATAR_CHARS = 200_000;
+const AVATAR_DATA_URL = /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
+const MAX_IMAGE_URL_CHARS = 600;
+
+function acceptableImage(image: string): boolean {
+  if (image.length <= MAX_IMAGE_URL_CHARS && image.startsWith("https://")) return true;
+  return image.length <= MAX_AVATAR_CHARS && AVATAR_DATA_URL.test(image);
+}
+
+/**
+ * Validate a user row about to be written and return the fields to overwrite.
+ * Names pass through the room-name sanitizer so the ladder and ranked seats
+ * obey the same rules as casual seats; images must be an https URL (OAuth
+ * avatars) or a bounded inline image (profile uploads). Bad input throws the
+ * APIError that Better Auth turns into the endpoint's 4xx response.
+ */
+export function userWritePatch(
+  data: Record<string, unknown>,
+  mode: "create" | "update",
+): { name?: string } {
+  const { name, image } = data as { name?: unknown; image?: unknown };
+  const patch: { name?: string } = {};
+
+  if (name !== undefined) {
+    if (typeof name !== "string") throw new APIError("BAD_REQUEST", { message: "Bad nickname." });
+    const clean = sanitizeName(name);
+    if (clean) patch.name = clean;
+    else if (mode === "create") patch.name = DEFAULT_NAME;
+    else throw new APIError("BAD_REQUEST", { message: "That nickname comes out empty." });
+  }
+
+  if (image !== undefined && image !== null) {
+    if (typeof image !== "string" || !acceptableImage(image)) {
+      throw new APIError("BAD_REQUEST", { message: "Avatar must be a small image." });
+    }
+  }
+
+  return patch;
+}
+
 async function readSecret(
   direct: string | undefined,
   store: SecretsStoreSecret | undefined,
@@ -73,10 +123,36 @@ async function resolveAuthEnv(env: AuthEnv): Promise<ResolvedAuthEnv> {
   };
 }
 
+/** Local development detection — the only place relaxed auth rules may apply. */
+export function isLocalDevHost(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+}
+
+// The local-dev inbox: with no email provider configured, the latest code per
+// address is held in memory so the sign-in dialog can display it instead of
+// asking the player to dig through the dev-server terminal.
+const devInbox = new Map<string, string>();
+
+/**
+ * Read the local-dev inbox. 404 outside localhost, and 404 whenever real
+ * email delivery is configured — then codes travel by email and nothing is
+ * ever stored here.
+ */
+export async function handleDevOtp(request: Request, env: AuthEnv): Promise<Response> {
+  const url = new URL(request.url);
+  if (!isLocalDevHost(url.hostname)) return new Response("Not found", { status: 404 });
+  const resolved = await resolveAuthEnv(env);
+  if (emailReady(resolved)) return new Response("Not found", { status: 404 });
+  const email = (url.searchParams.get("email") ?? "").toLowerCase();
+  return Response.json(
+    { otp: devInbox.get(email) ?? null },
+    { headers: { "cache-control": "no-store" } },
+  );
+}
+
 function authSecret(origin: string, env: ResolvedAuthEnv): string {
   if (env.BETTER_AUTH_SECRET) return env.BETTER_AUTH_SECRET;
-  const host = new URL(origin).hostname;
-  if (host === "localhost" || host === "127.0.0.1" || host === "::1") return DEV_SECRET;
+  if (isLocalDevHost(new URL(origin).hostname)) return DEV_SECRET;
   throw new Error("BETTER_AUTH_SECRET is required outside local development.");
 }
 
@@ -99,16 +175,46 @@ function createAuth(request: Request, env: ResolvedAuthEnv) {
           },
         }
       : {},
+    // Password accounts. Registration must prove the inbox before the first
+    // sign-in; the emailOTP plugin below turns that proof into a 6-digit code
+    // instead of Better Auth's default link email.
+    emailAndPassword: {
+      enabled: true,
+      requireEmailVerification: true,
+    },
+    emailVerification: {
+      // Verifying the register code IS the first sign-in, and a password
+      // sign-in that reaches a not-yet-verified account re-sends a fresh code.
+      autoSignInAfterVerification: true,
+      sendOnSignIn: true,
+    },
     plugins: [
       emailOTP({
         expiresIn: 300,
         allowedAttempts: 3,
         storeOTP: "hashed",
+        overrideDefaultEmailVerification: true,
         async sendVerificationOTP({ email, otp }) {
+          if (!emailReady(env)) {
+            // The unconfigured-email fallback. The UI only offers email
+            // flows on localhost then (capabilities); the dialog reads the
+            // code back through /api/dev-otp, with the terminal as backup.
+            devInbox.set(email.toLowerCase(), otp);
+            console.log(`[auth] local sign-in code for ${email}: ${otp}`);
+            return;
+          }
           await sendAuthOtp(env, { email, otp });
         },
       }),
     ],
+    databaseHooks: {
+      user: {
+        // Both hooks return only the corrected fields; Better Auth merges
+        // them over the incoming write.
+        create: { before: async (user) => ({ data: userWritePatch(user, "create") }) },
+        update: { before: async (user) => ({ data: userWritePatch(user, "update") }) },
+      },
+    },
     rateLimit: {
       enabled: true,
       storage: "database",
@@ -124,7 +230,13 @@ function createAuth(request: Request, env: ResolvedAuthEnv) {
 /** Better Auth's complete HTTP surface, kept behind the Worker routing seam. */
 export async function handleAuth(request: Request, env: AuthEnv): Promise<Response> {
   const resolved = await resolveAuthEnv(env);
-  if (new URL(request.url).pathname.includes("email-otp") && !emailReady(resolved)) {
+  const url = new URL(request.url);
+  // Routes that depend on delivering a code: the OTP endpoints, and sign-up —
+  // an account nobody can verify must not be creatable. Password sign-in
+  // stays open so existing accounts survive an email-provider outage.
+  const needsEmail =
+    url.pathname.includes("email-otp") || url.pathname.endsWith("/sign-up/email");
+  if (needsEmail && !emailReady(resolved) && !isLocalDevHost(url.hostname)) {
     return Response.json({ message: "Email sign-in is not configured." }, { status: 503 });
   }
   return createAuth(request, resolved).handler(request);
@@ -153,7 +265,7 @@ function emailReady(env: Pick<ResolvedAuthEnv, "RESEND_API_KEY" | "AUTH_EMAIL_FR
   return Boolean(env.RESEND_API_KEY && env.AUTH_EMAIL_FROM);
 }
 
-export async function authCapabilities(env: AuthEnv) {
+export async function authCapabilities(env: AuthEnv, hostname = "") {
   const [googleClientId, googleClientSecret, resendApiKey, authEmailFrom] = await Promise.all([
     readSecret(env.GOOGLE_CLIENT_ID, env.GOOGLE_CLIENT_ID_STORE),
     readSecret(env.GOOGLE_CLIENT_SECRET, env.GOOGLE_CLIENT_SECRET_STORE),
@@ -162,6 +274,8 @@ export async function authCapabilities(env: AuthEnv) {
   ]);
   return {
     google: Boolean(googleClientId && googleClientSecret),
-    emailOtp: Boolean(resendApiKey && authEmailFrom),
+    // Register/login with a password needs deliverable verification codes;
+    // on localhost the dev-server terminal is the inbox, no provider needed.
+    password: Boolean(resendApiKey && authEmailFrom) || isLocalDevHost(hostname),
   };
 }

@@ -108,17 +108,65 @@ Worker memory, because Worker isolates are ephemeral and distributed.
 
 ## Sign-in method
 
-The initial methods are Google OAuth and email OTP. Neither method stores an
-application password. Email delivery sits behind `worker/email.ts`; its first
-adapter uses Resend's free transactional-email allowance and can be replaced
-without changing Better Auth or the client UI.
+The methods are Google OAuth and email + password (2026-08-14; this replaced
+the earlier email-OTP sign-in, whose plugin now supplies verification codes
+instead). Registration proves the inbox before the first sign-in: sign-up
+sends a six-digit code — the email-OTP plugin overrides Better Auth's
+link-based verification (`overrideDefaultEmailVerification`) — and verifying
+it marks the email and signs the new account in
+(`autoSignInAfterVerification`). A password sign-in that reaches a
+never-verified account re-sends a fresh code (`sendOnSignIn`) and the dialog
+returns to its code step. Passwords are hashed by Better Auth (scrypt) into
+the existing `account` table; no schema change was needed.
+
+Accounts created in the email-OTP era keep their identity untouched (user id,
+nickname, avatar, rating, history) but hold no credential record. Their path
+in — and the ordinary recovery path — is the dialog's **Forgot password?**
+flow: `emailOtp.requestPasswordReset` mails a code, and
+`emailOtp.resetPassword` sets the password, creating the credential record
+when the account has none. Google-linked accounts are unaffected.
+
+Sign-up and the OTP endpoints are refused (503) when email delivery is not
+configured — an account nobody can verify must not be creatable — while
+password sign-in stays open so existing accounts survive a provider outage.
+Email delivery sits behind `worker/email.ts`; its first adapter uses Resend's
+free transactional-email allowance and can be replaced without changing
+Better Auth or the client UI.
 
 The SPA should expose authentication without interrupting guest play:
 
 - Signed out: a small **Sign in** action in the header.
-- Signed in: avatar/name and **Sign out**.
+- Signed out: the sign-in / register dialog is itself the Pudge-hook modal —
+  the hook drags the rusty plate in and holds it level while you use the form.
+- Signed in: avatar/name linking to the profile page (`#/profile`), and
+  **Sign out** behind a confirmation modal — the same hook, which yanks the
+  plate off-screen on confirm.
+
+The hook staging (thrown hook, chain, rusty plate, sparks, exit) lives once in
+`src/auth/HookModal.tsx`; `SignOutHook.tsx` and the sign-in dialog in
+`AuthMenu.tsx` are thin content passed into it. Once landed the plate keeps a
+slow perpetual hang rather than freezing; `flakes={false}` keeps rust from
+falling on the sign-in form while leaving that hang intact. Only the throw
+whoosh is scored (`src/auth/hookAudio.ts`); the landing is felt through sparks
+and shake, not heard.
 - Casual room actions: unchanged in either state.
 - Ranked entry point: prompt for sign-in if no session exists.
+
+## Profile
+
+`#/profile` (`src/pages/Profile.tsx`) edits the account's display identity
+through Better Auth's stock `/update-user` endpoint: the nickname that rooms,
+the ranked ladder, and match history all display, and the avatar, which the
+client crops to a small square JPEG data URL before upload
+(`src/auth/avatar.ts`) so no object storage is needed.
+
+Because `/update-user` is reachable by any signed-in caller — not just this
+page — the enforcement point is a `databaseHooks.user` gate in
+`worker/auth.ts` (`userWritePatch`): names pass through the shared room-name
+sanitizer, and images must be an https URL (OAuth avatars) or a bounded
+inline image. The page's third section, victory taunts, is not account data:
+it reuses the run store's device-local win phrases, which seat sync already
+carries into rooms.
 
 Client-side route checks are only user experience. This project uses
 `HashRouter`, so a path such as `#/ranked` is never sent to the Worker. Ranked
@@ -230,6 +278,18 @@ El Copero del Dota <auth@dotero.fmcurti.com.ar>
 
 Deploy only after the remote migration succeeds. Missing provider variables do
 not affect casual play; the sign-in dialog hides the unavailable methods.
+
+## Local development sign-in
+
+No provider credentials are needed to test signed-in features locally. On
+`localhost` the email flows stay enabled without Resend configured: apply the
+local migration once (`npx wrangler d1 migrations apply AUTH_DB --local`),
+run `npm run dev`, choose **Sign in → Create account**, and register with any
+email — the six-digit verification code is printed to the dev-server
+terminal (`[auth] local sign-in code for …`). Verifying it signs you in;
+from then on it is a normal password sign-in, no email involved. The
+relaxation is gated on the request hostname — production still returns 503
+for sign-up and OTP routes until Resend is configured.
 
 ## Sources
 
