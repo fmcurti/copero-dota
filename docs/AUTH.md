@@ -108,23 +108,26 @@ Worker memory, because Worker isolates are ephemeral and distributed.
 
 ## Sign-in method
 
-The methods are Google OAuth and email + password (2026-08-14; this replaced
-the earlier email-OTP sign-in, whose plugin now supplies verification codes
-instead). Registration proves the inbox before the first sign-in: sign-up
-sends a six-digit code — the email-OTP plugin overrides Better Auth's
-link-based verification (`overrideDefaultEmailVerification`) — and verifying
-it marks the email and signs the new account in
+The methods are Google OAuth, email OTP, and email + password. Passwords are
+fully optional: requesting a `sign-in` OTP and proving it signs an existing
+account in, or creates a new passwordless account when the email is new. A
+player can continue using email codes forever without adding a credential.
+
+Password registration is a separate option. It proves the inbox before the
+first sign-in: sign-up sends a six-digit code — the email-OTP plugin overrides
+Better Auth's link-based verification (`overrideDefaultEmailVerification`) —
+and verifying it marks the email and signs the new account in
 (`autoSignInAfterVerification`). A password sign-in that reaches a
 never-verified account re-sends a fresh code (`sendOnSignIn`) and the dialog
 returns to its code step. Passwords are hashed by Better Auth (scrypt) into
 the existing `account` table; no schema change was needed.
 
-Accounts created in the email-OTP era keep their identity untouched (user id,
-nickname, avatar, rating, history) but hold no credential record. Their path
-in — and the ordinary recovery path — is the dialog's **Forgot password?**
-flow: `emailOtp.requestPasswordReset` mails a code, and
-`emailOtp.resetPassword` sets the password, creating the credential record
-when the account has none. Google-linked accounts are unaffected.
+Passwordless accounts keep their identity untouched (user id, nickname,
+avatar, rating, history). If a player later wants a password, the ordinary
+**Forgot password?** flow also acts as **set first password**:
+`emailOtp.requestPasswordReset` mails a code, and `emailOtp.resetPassword`
+creates the credential record when the account has none. This is optional;
+Google-linked and OTP-only accounts continue working as before.
 
 Sign-up and the OTP endpoints are refused (503) when email delivery is not
 configured — an account nobody can verify must not be creatable — while
@@ -146,9 +149,10 @@ The hook staging (thrown hook, chain, rusty plate, sparks, exit) lives once in
 `src/auth/HookModal.tsx`; `SignOutHook.tsx` and the sign-in dialog in
 `AuthMenu.tsx` are thin content passed into it. Once landed the plate keeps a
 slow perpetual hang rather than freezing; `flakes={false}` keeps rust from
-falling on the sign-in form while leaving that hang intact. Only the throw
-whoosh is scored (`src/auth/hookAudio.ts`); the landing is felt through sparks
-and shake, not heard.
+falling on the sign-in form while leaving that hang intact. The throw, impact,
+and retract use the actual Dota 2 Meat Hook clips packaged in `public/audio`
+and sequenced by `src/auth/hookAudio.ts`; playback remains optional and is
+skipped with reduced motion.
 - Casual room actions: unchanged in either state.
 - Ranked entry point: prompt for sign-in if no session exists.
 
@@ -284,12 +288,13 @@ not affect casual play; the sign-in dialog hides the unavailable methods.
 No provider credentials are needed to test signed-in features locally. On
 `localhost` the email flows stay enabled without Resend configured: apply the
 local migration once (`npx wrangler d1 migrations apply AUTH_DB --local`),
-run `npm run dev`, choose **Sign in → Create account**, and register with any
-email — the six-digit verification code is printed to the dev-server
-terminal (`[auth] local sign-in code for …`). Verifying it signs you in;
-from then on it is a normal password sign-in, no email involved. The
-relaxation is gated on the request hostname — production still returns 503
-for sign-up and OTP routes until Resend is configured.
+run `npm run dev`, choose **Sign in → Email code**, and use any email. The
+six-digit code appears in the dialog and is also printed to the dev-server
+terminal (`[auth] local sign-in code for …`). Verifying it creates/signs in a
+passwordless account. The separate **Create with password** path can test a
+password credential. The relaxation is gated on the request hostname —
+production still returns 503 for sign-up and OTP routes until Resend is
+configured.
 
 ## Sources
 
@@ -300,6 +305,7 @@ for sign-up and OTP routes until Resend is configured.
 - [Better Auth Cloudflare D1 support](https://better-auth.com/blog/1-5)
 - [Better Auth rate limiting on Cloudflare](https://better-auth.com/docs/concepts/rate-limit)
 - [Better Auth email OTP](https://better-auth.com/docs/plugins/email-otp)
+- [Dota 2 Wiki: Pudge sound samples](https://dota2.fandom.com/wiki/Category:Sounds_weapons_hero_pudge)
 - [Better Auth Google provider](https://better-auth.com/docs/authentication/google)
 - [Better Auth repository and MIT license](https://github.com/better-auth/better-auth)
 - [Cloudflare D1 overview](https://developers.cloudflare.com/d1/)

@@ -5,6 +5,14 @@ const CLIPS = {
   matchFound: "/audio/match-found.mp3",
 } as const;
 
+// The match-found horn is mastered much hotter than the spoken announcer
+// lines, so tame it independently while preserving the player's volume choice.
+const CLIP_GAIN: Record<keyof typeof CLIPS, number> = {
+  yourTurn: 1,
+  fiveSeconds: 1,
+  matchFound: 0.1,
+};
+
 const VOLUME_KEY = "copero-announcer-volume";
 const MUTED_KEY = "copero-announcer-muted";
 
@@ -46,7 +54,7 @@ export function setAnnouncerMuted(muted: boolean) {
 export function announce(name: keyof typeof CLIPS) {
   if (getAnnouncerMuted()) return;
   const a = clip(name);
-  a.volume = getAnnouncerVolume();
+  a.volume = Math.min(1, getAnnouncerVolume() * CLIP_GAIN[name]);
   a.currentTime = 0;
   // Browsers block autoplay until the user first interacts — stay silent then.
   void a.play().catch(() => {});

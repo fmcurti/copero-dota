@@ -274,8 +274,12 @@ export async function authCapabilities(env: AuthEnv, hostname = "") {
   ]);
   return {
     google: Boolean(googleClientId && googleClientSecret),
-    // Register/login with a password needs deliverable verification codes;
-    // on localhost the dev-server terminal is the inbox, no provider needed.
-    password: Boolean(resendApiKey && authEmailFrom) || isLocalDevHost(hostname),
+    // Email codes remain a complete sign-in/sign-up method; passwords are an
+    // optional second credential, never a migration requirement. Localhost
+    // uses the in-memory dev inbox when no delivery provider is configured.
+    emailOtp: Boolean(resendApiKey && authEmailFrom) || isLocalDevHost(hostname),
+    // Password sign-in itself does not need email delivery. Registration and
+    // recovery still pass through the email-gated endpoints above.
+    password: true,
   };
 }
