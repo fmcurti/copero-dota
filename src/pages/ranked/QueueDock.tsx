@@ -10,7 +10,12 @@ import {
   type DissolvedCheck,
   type ReadySlot,
 } from "../../ranked/protocol";
-import { fmtClock, useQueueStore, type CheckView } from "../../ranked/queueStore";
+import {
+  fmtClock,
+  useQueueStore,
+  type CheckView,
+  type MatchedView,
+} from "../../ranked/queueStore";
 
 // ---------------------------------------------------------------------------
 // The Dota matchmaking surfaces, floating over every page (mounted in App):
@@ -26,10 +31,16 @@ import { fmtClock, useQueueStore, type CheckView } from "../../ranked/queueStore
 // the ✕, Decline Match, closing the tab — is one gesture: drop the socket.
 // ---------------------------------------------------------------------------
 
+/** How long the all-green grid holds after everyone accepts — the Dota
+ *  beat where you savor the 4/4 before the match takes you. */
+const MATCH_REVEAL_MS = 5000;
+
 export default function QueueDock() {
+  const navigate = useNavigate();
   const queued = useQueueStore((s) => s.queued);
   const check = useQueueStore((s) => s.check);
   const dissolved = useQueueStore((s) => s.dissolved);
+  const matched = useQueueStore((s) => s.matched);
   const notice = useQueueStore((s) => s.notice);
 
   // Feedback expires on its own — the finder line and the idle toast both.
@@ -47,13 +58,29 @@ export default function QueueDock() {
     return () => clearTimeout(timer);
   }, [dissolved]);
 
+  // The match reveal: hold the full-green grid, then enter the room. (If the
+  // grid never rendered — no ready frame survived — skip straight in.)
+  useEffect(() => {
+    if (!matched) return;
+    const timer = setTimeout(
+      () => {
+        const code = matched.code;
+        useQueueStore.getState().clearMatched();
+        navigate(`/ranked/${code}`);
+      },
+      matched.players.length ? MATCH_REVEAL_MS : 0,
+    );
+    return () => clearTimeout(timer);
+  }, [matched, navigate]);
+
   return (
     <>
       {queued && <QueueSocketDriver />}
       {queued && !check && dissolved && <DissolvedPanel dissolved={dissolved} />}
       {queued && !check && !dissolved && <MatchFinder />}
-      {queued && check && !check.accepted && <ReadyModal check={check} />}
-      {queued && check && check.accepted && <WaitingPanel check={check} />}
+      {((queued && check) || (matched && matched.players.length > 0)) && (
+        <CheckStage check={queued ? check : null} matched={matched} />
+      )}
       {!queued && notice && (
         <div className="beat-in fixed bottom-4 right-4 z-40">
           <div className="panel rounded-lg border-dire-dim px-4 py-3 text-sm text-dire">
@@ -85,7 +112,6 @@ function notifyHidden(title: string, body: string) {
 }
 
 function QueueSocketDriver() {
-  const navigate = useNavigate();
   // One horn per check, one heads-up per fill countdown — deadlines are the
   // identity of both.
   const horned = useRef<number | null>(null);
@@ -105,8 +131,8 @@ function QueueSocketDriver() {
       if (!msg) return;
       const store = useQueueStore.getState();
       if (msg.t === "match") {
-        store.leave();
-        navigate(`/ranked/${msg.code}`);
+        // No navigation here — the dock holds the all-green reveal first.
+        store.applyMatch(msg.code);
       } else if (msg.t === "ready") {
         if (horned.current !== msg.deadline) {
           horned.current = msg.deadline;
@@ -205,10 +231,46 @@ function MatchFinder() {
 }
 
 // ---------------------------------------------------------------------------
-// The ready check overlays. Both live in the same centered slot over the
-// green burst, so accepting swaps the dialog for the grid in place.
+// The ready check overlays. The accept dialog and the waiting grid are two
+// faces of one 3D stage over the green burst: accepting rolls the cube —
+// the dialog tips away and the grid rides in on the next face, as in Dota.
 // ---------------------------------------------------------------------------
 
+/** The dialog chrome both faces share: header band, body, timer bar. */
+function CheckCard({
+  eyebrow,
+  labelId,
+  barFrac,
+  children,
+}: {
+  eyebrow: string;
+  labelId: string;
+  barFrac: number;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="panel flex h-full w-full flex-col overflow-hidden rounded-sm">
+      <div className="border-b border-ink-700/80 bg-ink-950/60 px-6 pb-4 pt-5 text-center">
+        <div className="plate text-base tracking-[0.35em] text-slate-strong">{eyebrow}</div>
+        <div
+          id={labelId}
+          className="plate mt-1 text-3xl font-extrabold tracking-[0.12em] text-bone"
+        >
+          Ranked draft
+        </div>
+      </div>
+      {children}
+      <div className="mt-auto h-[3px] w-full bg-ink-800">
+        <div
+          className="h-full bg-radiant/80"
+          style={{ width: `${barFrac * 100}%`, transition: "width 200ms linear" }}
+        />
+      </div>
+    </div>
+  );
+}
+
+/** Standalone overlay for a single card (the dissolved epitaph). */
 function CheckShell({
   eyebrow,
   deadline,
@@ -226,76 +288,93 @@ function CheckShell({
     <div className="fixed inset-0 z-[60] grid place-items-center p-4">
       <div className="absolute inset-0 bg-black/70" />
       <div className="ready-bloom absolute inset-0" />
-      <div className="anim-title-in panel relative w-[min(94vw,600px)] overflow-hidden rounded-sm">
-        <div className="border-b border-ink-700/80 bg-ink-950/60 px-6 pb-4 pt-5 text-center">
-          <div className="plate text-base tracking-[0.35em] text-slate-strong">{eyebrow}</div>
-          <div
-            id={labelId}
-            className="plate mt-1 text-3xl font-extrabold tracking-[0.12em] text-bone"
-          >
-            Ranked draft
-          </div>
-        </div>
-        {children}
-        <div className="h-[3px] w-full bg-ink-800">
-          <div
-            className="h-full bg-radiant/80"
-            style={{ width: `${frac * 100}%`, transition: "width 200ms linear" }}
-          />
-        </div>
+      <div className="anim-title-in relative w-[min(94vw,600px)]">
+        <CheckCard eyebrow={eyebrow} labelId={labelId} barFrac={frac}>
+          {children}
+        </CheckCard>
       </div>
     </div>
   );
 }
 
-function ReadyModal({ check }: { check: CheckView }) {
+/** Both faces stay mounted; `showGrid` rolls the cube. During the matched
+ *  reveal the grid face holds all-green with a full bar. */
+function CheckStage({ check, matched }: { check: CheckView | null; matched: MatchedView | null }) {
   const accept = useQueueStore((s) => s.accept);
   const leave = useQueueStore((s) => s.leave);
-  return (
-    <div role="dialog" aria-modal="true" aria-labelledby="ready-title">
-      <CheckShell eyebrow="Your game is ready" deadline={check.deadline} labelId="ready-title">
-        <div className="relative px-6 pb-7 pt-8">
-          <button
-            autoFocus
-            onClick={accept}
-            className="cta-accept plate mx-auto block w-64 max-w-full rounded-sm py-3.5 text-2xl font-bold tracking-[0.25em]"
-          >
-            Accept
-          </button>
-          <button
-            onClick={leave}
-            className="absolute bottom-2 right-4 flex items-center gap-1.5 py-1 text-xs text-slate-mid transition hover:text-bone"
-          >
-            <span className="grid h-3.5 w-3.5 place-items-center rounded-full border border-current text-[9px] leading-none">
-              i
-            </span>
-            Decline Match
-          </button>
-        </div>
-      </CheckShell>
-    </div>
-  );
-}
+  const now = useNow(200);
+  const showGrid = matched != null || (check?.accepted ?? false);
+  const barFrac = matched
+    ? 1
+    : Math.min(1, Math.max(0, (check?.deadline ?? 0) - now) / RANKED_ACCEPT_MS);
+  const players = matched?.players ?? check?.players ?? [];
+  const acceptedCount = players.filter((p) => p.accepted).length;
 
-function WaitingPanel({ check }: { check: CheckView }) {
-  const accepted = check.players.filter((p) => p.accepted).length;
   return (
-    <div aria-live="polite">
-      <CheckShell eyebrow="Waiting for players" deadline={check.deadline} labelId="waiting-title">
-        <div className="flex flex-wrap justify-center gap-2 px-6 pt-6">
-          {check.players.map((slot, i) => (
-            <ReadySeat key={i} slot={slot} />
-          ))}
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Ranked ready check"
+      className="fixed inset-0 z-[60] grid place-items-center p-4"
+    >
+      <div className="absolute inset-0 bg-black/70" />
+      <div className="ready-bloom absolute inset-0" />
+      <div className="anim-title-in check-stage relative grid w-[min(94vw,600px)]">
+        <div
+          aria-hidden={showGrid}
+          className={`check-face [grid-area:1/1] ${showGrid ? "check-face-out" : ""}`}
+        >
+          <CheckCard eyebrow="Your game is ready" labelId="ready-title" barFrac={barFrac}>
+            <div className="relative px-6 pb-7 pt-8">
+              <button
+                autoFocus
+                disabled={showGrid}
+                onClick={accept}
+                className="cta-accept plate mx-auto block w-64 max-w-full rounded-sm py-3.5 text-2xl font-bold tracking-[0.25em]"
+              >
+                Accept
+              </button>
+              <button
+                disabled={showGrid}
+                onClick={leave}
+                className="absolute bottom-2 right-4 flex items-center gap-1.5 py-1 text-xs text-slate-mid transition hover:text-bone"
+              >
+                <span className="grid h-3.5 w-3.5 place-items-center rounded-full border border-current text-[9px] leading-none">
+                  i
+                </span>
+                Decline Match
+              </button>
+            </div>
+          </CheckCard>
         </div>
-        <div className="px-6 pb-4 pt-3 text-right">
-          <span className="plate text-sm tracking-[0.2em] text-bone">
-            <span className="font-mono tabular-nums">
-              {accepted} / {check.players.length}
-            </span>{" "}
-            accepted
-          </span>
+        <div
+          aria-hidden={!showGrid}
+          aria-live={showGrid ? "polite" : "off"}
+          className={`check-face [grid-area:1/1] ${
+            showGrid ? "check-face-enter" : "check-face-under"
+          }`}
+        >
+          <CheckCard
+            eyebrow={matched ? "All players ready" : "Waiting for players"}
+            labelId="waiting-title"
+            barFrac={barFrac}
+          >
+            <div className="flex flex-wrap justify-center gap-2 px-6 pt-6">
+              {players.map((slot, i) => (
+                <ReadySeat key={i} slot={slot} />
+              ))}
+            </div>
+            <div className="px-6 pb-4 pt-3 text-right">
+              <span className="plate text-sm tracking-[0.2em] text-bone">
+                <span className="font-mono tabular-nums">
+                  {acceptedCount} / {players.length}
+                </span>{" "}
+                accepted
+              </span>
+            </div>
+          </CheckCard>
         </div>
-      </CheckShell>
+      </div>
     </div>
   );
 }
