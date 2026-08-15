@@ -50,8 +50,11 @@ small — it only gathers players.
   countdown lands, the head of the queue — capped at 8 — is **locked into a
   Dota-style ready check** with a **15-second accept window** (longer than
   Dota's: a browser tab may be hidden). The roster is all-or-nothing:
-  - Everyone accepts → the room is created and everyone is seated. An AFK
-    player from then on is carried by the normal timeout/autopick machinery.
+  - Everyone accepts → the room is created and everyone is seated. The
+    client holds the all-green grid for ~5s (the Dota reveal) before
+    entering the room; accepting itself rolls the dialog over to the grid
+    like a cube face. An AFK player from then on is carried by the normal
+    timeout/autopick machinery.
   - **Decline = closing the socket** (the Decline button, the ✕, the tab).
     Any locked member leaving dissolves the check; nobody else is punished,
     and everyone still connected keeps their place at the front of the line.

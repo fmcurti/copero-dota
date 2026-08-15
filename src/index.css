@@ -245,6 +245,33 @@ body::before {
     animation: bloom-breathe 4s ease-in-out infinite;
   }
 
+  /* The ready check's cube roll — accepting tips the dialog away (top falls
+     back) and the waiting grid rides in on the next face, as in Dota. */
+  .check-stage {
+    perspective: 1200px;
+  }
+  .check-face {
+    backface-visibility: hidden;
+    transition:
+      transform 0.45s cubic-bezier(0.55, 0.08, 0.35, 1),
+      opacity 0.4s ease;
+  }
+  .check-face-out {
+    transform: rotateX(90deg);
+    opacity: 0;
+    pointer-events: none;
+  }
+  .check-face-under {
+    transform: rotateX(-90deg);
+    opacity: 0;
+    pointer-events: none;
+  }
+  .check-face-enter {
+    transform: rotateX(0deg);
+    opacity: 1;
+    transition-delay: 0.18s;
+  }
+
   /* An accepted seat in the waiting grid — lit Radiant, framing the avatar. */
   .seat-accepted {
     background: linear-gradient(180deg, #79c167 0%, #4e8f3f 55%, #3a6b2f 100%);

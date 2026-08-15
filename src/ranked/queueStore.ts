@@ -17,6 +17,13 @@ export interface CheckView {
   players: ReadySlot[];
 }
 
+/** The formed match, held on screen all-green for a beat (Dota's reveal)
+ *  before the dock navigates into the room. */
+export interface MatchedView {
+  code: string;
+  players: ReadySlot[];
+}
+
 interface QueueStore {
   /** queued = the socket driver is mounted. */
   queued: boolean;
@@ -30,6 +37,9 @@ interface QueueStore {
   /** A check we sat in just failed — held briefly so the grid can show the
    *  red squares before the finder takes back over. */
   dissolved: DissolvedCheck | null;
+  /** Our match formed — the all-green grid holds until the dock navigates.
+   *  Outlives queued: the socket is done, the reveal is not. */
+  matched: MatchedView | null;
   /** Transient feedback: kicked, replaced by another tab, check dissolved… */
   notice: string | null;
 
@@ -39,6 +49,10 @@ interface QueueStore {
   accept: () => void;
   clearNotice: () => void;
   clearDissolved: () => void;
+  /** The match frame landed: freeze the grid all-green and let the driver
+   *  unmount (queued off) so partysocket can't fight the server's goodbye. */
+  applyMatch: (code: string) => void;
+  clearMatched: () => void;
 
   // ---- driver wiring ----
   applyQueue: (msg: Extract<QueueServerMsg, { t: "queue" }>) => void;
@@ -67,6 +81,7 @@ export const useQueueStore = create<QueueStore>((set, get) => ({
   fillDeadline: null,
   check: null,
   dissolved: null,
+  matched: null,
   notice: null,
 
   join: () =>
@@ -78,6 +93,7 @@ export const useQueueStore = create<QueueStore>((set, get) => ({
       fillDeadline: null,
       check: null,
       dissolved: null,
+      matched: null,
       notice: null,
     }),
 
@@ -92,6 +108,21 @@ export const useQueueStore = create<QueueStore>((set, get) => ({
 
   clearNotice: () => set({ notice: null }),
   clearDissolved: () => set({ dissolved: null }),
+
+  applyMatch: (code) =>
+    set((state) => ({
+      queued: false,
+      fillDeadline: null,
+      check: null,
+      dissolved: null,
+      notice: null,
+      matched: {
+        code,
+        players: (state.check?.players ?? []).map((p) => ({ ...p, accepted: true })),
+      },
+    })),
+
+  clearMatched: () => set({ matched: null }),
 
   applyQueue: (msg) =>
     set((state) => ({
