@@ -12,6 +12,68 @@ const SLOT_LABEL: Record<SlotId, string> = {
   support2: "Support 5",
 };
 
+/**
+ * The phone-width companion to RosterBoard: one sticky bar over the pack with
+ * the five role slots, the hero pool, and the team OVR — so a drafter scrolling
+ * through cards never loses sight of what the team still needs. Hidden from lg
+ * up, where the full board sits beside the pack.
+ */
+export function RosterStrip({
+  slots,
+  heroes,
+  strength,
+  heroById,
+}: {
+  slots: Slots;
+  heroes: number[];
+  strength: TeamStrength;
+  heroById: Map<number, Hero>;
+}) {
+  return (
+    <div className="panel sticky top-2 z-20 mb-3 flex items-center gap-2 rounded-lg px-2.5 py-2 lg:hidden">
+      <div className="flex min-w-0 flex-1 gap-1.5">
+        {SLOT_IDS.map((slotId) => {
+          const p = slots[slotId];
+          return (
+            <div key={slotId} className="min-w-0 flex-1" title={SLOT_LABEL[slotId]}>
+              <div className={`h-1 rounded ${p ? ROLE_BAR[p.role] : "bg-ink-700"}`} />
+              <div
+                className={`mt-1 truncate text-[10px] leading-tight ${
+                  p ? "font-semibold text-slate-strong" : "text-slate-dim"
+                }`}
+              >
+                {p ? p.nickname : SLOT_LABEL[slotId].replace("Support ", "Sup ")}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div className="flex shrink-0 items-center gap-2 border-l border-ink-700/70 pl-2">
+        <div className="flex -space-x-2" title={`Hero pool ${heroes.length}/5`}>
+          {heroes.map((id) => (
+            <img
+              key={id}
+              src={heroImage(heroById.get(id)?.picture)}
+              alt={heroById.get(id)?.name ?? ""}
+              className="h-4 w-[27px] rounded-[2px] border border-ink-900 object-cover"
+            />
+          ))}
+          {Array.from({ length: 5 - heroes.length }, (_, i) => (
+            <span key={i} className="h-4 w-[27px] rounded-[2px] border border-ink-900 bg-ink-800" />
+          ))}
+        </div>
+        <span
+          key={strength.overall}
+          className={`anim-score-pop font-mono text-lg font-extrabold leading-none ${ovrColor(strength.overall)}`}
+          title="Team OVR"
+        >
+          {strength.overall || "—"}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return <div className="plate mb-1.5 text-sm tracking-widest text-slate-dim">{children}</div>;
 }

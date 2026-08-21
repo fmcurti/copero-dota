@@ -36,7 +36,7 @@ export function ChatPanel({
     return (
       <button
         onClick={() => setOpen(true)}
-        className="fixed bottom-4 right-4 z-40 rounded-full border border-ink-600 bg-ink-950/95 px-4 py-2 text-sm font-semibold text-slate-strong shadow-lg hover:border-slate-mid hover:text-bone"
+        className="bottom-safe-4 fixed right-4 z-40 rounded-full border border-ink-600 bg-ink-950/95 px-4 py-2 text-sm font-semibold text-slate-strong shadow-lg hover:border-slate-mid hover:text-bone"
       >
         Chat
         {unread > 0 && (
@@ -59,7 +59,7 @@ export function ChatPanel({
   const panel = (
     <div
       className={`rounded-lg border border-ink-700 p-2 ${
-        docked ? "bg-ink-900/40" : "w-72 bg-ink-950/95 shadow-lg"
+        docked ? "bg-ink-900/40" : "w-[min(18rem,calc(100vw-2rem))] bg-ink-950/95 shadow-lg"
       }`}
     >
       <div className="flex items-center justify-between px-1 pb-1">
@@ -67,14 +67,14 @@ export function ChatPanel({
         {!docked && (
           <button
             onClick={() => setOpen(false)}
-            className="text-xs text-slate-dim hover:text-bone"
+            className="-m-1 p-1 text-xs text-slate-dim hover:text-bone"
             aria-label="Collapse chat"
           >
             ✕
           </button>
         )}
       </div>
-      <div ref={listRef} className="max-h-64 space-y-1 overflow-y-auto px-1 text-sm">
+      <div ref={listRef} className="max-h-[min(16rem,40dvh)] space-y-1 overflow-y-auto px-1 text-sm">
         {chat.length === 0 && (
           <div className="py-2 text-center text-xs text-slate-dim">No messages yet.</div>
         )}
@@ -102,7 +102,7 @@ export function ChatPanel({
             onChange={(e) => setDraft(e.target.value)}
             maxLength={MAX_CHAT_LEN}
             placeholder="Say something…"
-            className="min-w-0 flex-1 rounded-md border border-ink-700 bg-ink-950 px-2 py-1 text-sm text-bone placeholder:text-slate-dim focus:border-slate-mid focus:outline-none"
+            className="min-w-0 flex-1 rounded-md border border-ink-700 bg-ink-950 px-2 py-1 text-base text-bone placeholder:text-slate-dim focus:border-slate-mid focus:outline-none sm:text-sm"
           />
           <button
             type="submit"
@@ -119,5 +119,5 @@ export function ChatPanel({
     </div>
   );
 
-  return docked ? panel : <div className="fixed bottom-4 right-4 z-40">{panel}</div>;
+  return docked ? panel : <div className="bottom-safe-4 fixed right-4 z-40">{panel}</div>;
 }

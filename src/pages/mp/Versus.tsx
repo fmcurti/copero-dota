@@ -46,7 +46,7 @@ export default function Versus() {
             value={teamName}
             onChange={(e) => setTeamName(e.target.value)}
             maxLength={30}
-            className="w-full rounded-lg border border-ink-700 bg-ink-900/40 px-4 py-3 text-sm text-bone outline-none focus:border-slate-mid"
+            className="w-full rounded-lg border border-ink-700 bg-ink-900/40 px-4 py-3 text-base text-bone outline-none focus:border-slate-mid sm:text-sm"
           />
         </Section>
 

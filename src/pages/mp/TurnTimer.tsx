@@ -19,7 +19,7 @@ export function TurnTimer({ deadline, totalSecs }: { deadline: number; totalSecs
 
   return (
     <div
-      className="fixed bottom-5 left-5 z-50 h-20 w-20 rounded-full border border-ink-700 bg-ink-950/90 shadow-[0_4px_24px_rgba(0,0,0,0.6)]"
+      className="bottom-safe-4 fixed left-4 z-50 h-16 w-16 rounded-full border sm:bottom-safe-5 sm:left-5 sm:h-20 sm:w-20 border-ink-700 bg-ink-950/90 shadow-[0_4px_24px_rgba(0,0,0,0.6)]"
       title="Time left on your pick"
     >
       <svg viewBox="0 0 80 80" className="absolute inset-0 -rotate-90">
@@ -41,7 +41,7 @@ export function TurnTimer({ deadline, totalSecs }: { deadline: number; totalSecs
         />
       </svg>
       <span
-        className={`absolute inset-0 flex items-center justify-center font-mono text-2xl font-extrabold tabular-nums ${
+        className={`absolute inset-0 flex items-center justify-center font-mono text-xl font-extrabold tabular-nums sm:text-2xl ${
           secs <= 5 ? "anim-urgent text-dire" : secs <= 10 ? "text-trophy" : "text-bone"
         }`}
       >

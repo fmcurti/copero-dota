@@ -28,7 +28,7 @@ export default function History() {
               : ""
           }`}
         >
-          <div className="flex items-baseline justify-between">
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
             <div className="text-lg font-bold">
               <span className={`plate ${r.place === 1 ? "gold-text" : "text-bone"}`}>
                 {r.place === 1 ? "🏆 Campeón" : ordinal(r.place)}

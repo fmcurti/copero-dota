@@ -710,7 +710,7 @@ export default function HookModal({
           />
           {/* the plate itself: forged charcoal eaten by rust */}
           <div
-            className={`relative ${contentClassName}`}
+            className={`relative max-h-[calc(100dvh-6rem)] overflow-y-auto ${contentClassName}`}
             style={{
               clipPath:
                 "polygon(0 14px, 12px 0, calc(100% - 16px) 0, 100% 10px, 100% calc(100% - 12px), calc(100% - 10px) 100%, 14px 100%, 0 calc(100% - 16px))",

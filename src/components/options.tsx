@@ -17,7 +17,7 @@ export function OptionCard({
     <button
       onClick={onClick}
       disabled={disabled}
-      className={`w-full rounded-lg border px-4 py-3 text-left transition sm:w-56 ${
+      className={`grow basis-[calc(50%-0.25rem)] rounded-lg border px-3 py-2.5 text-left transition sm:w-56 sm:grow-0 sm:basis-auto sm:px-4 sm:py-3 ${
         selected
           ? "border-bone/70 bg-ink-800"
           : "border-ink-700 bg-ink-900/40 hover:border-ink-600"

@@ -515,13 +515,13 @@ function ClashPlate({
             : "border-ink-600";
   return (
     <div
-      className={`panel flex min-w-0 flex-1 items-center gap-3 border px-4 py-2.5 ${edge} ${
+      className={`panel flex min-w-0 flex-1 items-center gap-3 border px-3 py-2 sm:px-4 sm:py-2.5 ${edge} ${
         side === "l" ? "angled-l anim-slam-l justify-end text-right" : "angled-r anim-slam-r"
       } ${state === "lost" ? "opacity-60" : ""}`}
     >
       <div className="min-w-0">
         <div
-          className={`plate-italic truncate text-lg leading-tight sm:text-xl ${
+          className={`plate-italic truncate text-base leading-tight sm:text-xl ${
             hl === "self" ? "text-bone" : hl === "human" ? "text-bone/80" : "text-slate-strong"
           }`}
         >
@@ -561,7 +561,7 @@ function ClashStrip({
   const lastLuck = shown > 0 ? m.luckGames?.[shown - 1] : undefined;
   const luckLabel = lastLuck?.a ? m.a.luck?.label : lastLuck?.b ? m.b.luck?.label : null;
   return (
-    <div className="pointer-events-none fixed bottom-4 left-1/2 z-40 w-[min(880px,94vw)] -translate-x-1/2">
+    <div className="bottom-safe-4 pointer-events-none fixed left-1/2 z-40 w-[min(880px,94vw)] -translate-x-1/2">
       <div className="relative">
         {/* the winner screams OVER the teams, tail dropping toward their plate */}
         {taunt && (
@@ -581,11 +581,11 @@ function ClashStrip({
             hl={hl(m.a)}
             state={over ? (aWon ? "won" : "lost") : "live"}
           />
-          <div className="flex w-24 shrink-0 flex-col items-center justify-center rounded border border-ink-600 bg-ink-950/95 px-2 py-1">
+          <div className="flex w-16 shrink-0 flex-col items-center justify-center rounded border border-ink-600 bg-ink-950/95 px-1 py-1 sm:w-24 sm:px-2">
             {shown === 0 ? (
-              <span className="anim-vs-pop plate-italic gold-text text-3xl">VS</span>
+              <span className="anim-vs-pop plate-italic gold-text text-2xl sm:text-3xl">VS</span>
             ) : (
-              <div className="flex items-baseline gap-1.5 font-mono text-2xl font-extrabold tabular-nums">
+              <div className="flex items-baseline gap-1 font-mono text-xl font-extrabold tabular-nums sm:gap-1.5 sm:text-2xl">
                 <span key={`a${scoreA}`} className={`anim-score-pop ${over && aWon ? "text-radiant" : "text-bone"}`}>
                   {scoreA}
                 </span>
@@ -914,24 +914,31 @@ export function Broadcast({
 
       {/* bracket */}
       {roundsShown.size > 0 && (
-        <div className="beat-in overflow-x-auto">
-          <div className="min-w-[860px] space-y-6">
-            <BracketSection
-              title="Upper Bracket"
-              columns={UB_COLUMNS}
-              rounds={result.rounds}
-              roundsShown={roundsShown}
-              humanGames={humanGames}
-              hl={hl}
-            />
-            <BracketSection
-              title="Lower Bracket"
-              columns={LB_COLUMNS}
-              rounds={result.rounds}
-              roundsShown={roundsShown}
-              humanGames={humanGames}
-              hl={hl}
-            />
+        <div className="beat-in">
+          <div className="plate mb-1 text-[10px] tracking-widest text-slate-dim lg:hidden">
+            swipe sideways to follow the bracket →
+          </div>
+          {/* The bracket keeps its desktop width and scrolls inside its own
+              box on phones — the page itself never scrolls sideways. */}
+          <div className="scrollbar-none -mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
+            <div className="min-w-[860px] space-y-6">
+              <BracketSection
+                title="Upper Bracket"
+                columns={UB_COLUMNS}
+                rounds={result.rounds}
+                roundsShown={roundsShown}
+                humanGames={humanGames}
+                hl={hl}
+              />
+              <BracketSection
+                title="Lower Bracket"
+                columns={LB_COLUMNS}
+                rounds={result.rounds}
+                roundsShown={roundsShown}
+                humanGames={humanGames}
+                hl={hl}
+              />
+            </div>
           </div>
         </div>
       )}

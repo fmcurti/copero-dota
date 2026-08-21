@@ -96,7 +96,9 @@ export default function Room({
   const { mySeat, isHost, isSpectator } = view;
 
   return (
-    <div>
+    // Outside the draft the chat floats bottom-right; on narrow screens the
+    // page leaves it room so it never sits on the last button.
+    <div className={snapshot.phase !== "drafting" ? "pb-16 lg:pb-0" : undefined}>
       {stinger && (
         <Stinger
           eyebrow={`Sala ${code}`}
@@ -243,7 +245,7 @@ function MySeatPlate({
         onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
         maxLength={NAME_MAX}
         title="Edit your team name"
-        className="min-w-0 flex-1 rounded-sm bg-transparent text-sm font-bold text-bone outline-none placeholder:text-slate-dim focus:bg-ink-900/60"
+        className="min-w-0 flex-1 rounded-sm bg-transparent text-base font-bold text-bone outline-none placeholder:text-slate-dim focus:bg-ink-900/60 sm:text-sm"
       />
       {taken && (
         <span className="plate shrink-0 text-[10px] tracking-widest text-dire">Name taken</span>
@@ -651,7 +653,7 @@ function AssembledView({
                         heroId: Number(event.target.value),
                       })
                     }
-                    className="w-40 rounded border border-ink-600 bg-ink-900 px-2 py-1 text-sm text-slate-strong sm:w-52"
+                    className="w-40 rounded border border-ink-600 bg-ink-900 px-2 py-1.5 text-base text-slate-strong sm:w-52 sm:py-1 sm:text-sm"
                   >
                     {myBoard.heroes.map((heroId) => (
                       <option key={heroId} value={heroId}>
@@ -843,7 +845,7 @@ function BroadcastView({
               })}
             </div>
           </div>
-          <div className="flex gap-3">
+          <div className="flex flex-col gap-3 sm:flex-row">
             <button
               onClick={() => navigate(ranked ? "/ranked" : "/")}
               className="flex-1 rounded-lg border border-ink-600 py-3 text-sm font-semibold text-slate-strong hover:border-slate-mid hover:text-bone"

@@ -4,7 +4,7 @@ import { Broadcast } from "../components/Broadcast";
 import { DEV_TAUNT_ALL } from "../game/beats";
 import { CardButton, HeroCardContent, PlayerCardContent } from "../components/cards";
 import { DraftRecap } from "../components/DraftRecap";
-import { RosterBoard } from "../components/RosterBoard";
+import { RosterBoard, RosterStrip } from "../components/RosterBoard";
 import { Stinger } from "../components/Stinger";
 import { buildCardPool } from "../game/cards";
 import { eventShortName, useBundle, useHeroById } from "../game/data";
@@ -49,7 +49,7 @@ function ManualAssign({
             <select
               value={heroAssign[String(p.steamId)] ?? ""}
               onChange={(e) => onSwap(String(p.steamId), Number(e.target.value))}
-              className="rounded border border-ink-600 bg-ink-900 px-2 py-1 text-sm text-slate-strong"
+              className="min-w-0 flex-1 rounded border border-ink-600 bg-ink-900 px-2 py-1.5 text-base text-slate-strong sm:flex-none sm:py-1 sm:text-sm"
             >
               {heroes.map((h) => (
                 <option key={h} value={h}>
@@ -221,7 +221,7 @@ export default function Draft() {
                 heroById={heroById}
               />
             </div>
-            <div className="flex gap-3">
+            <div className="flex flex-col gap-3 sm:flex-row">
               <button
                 onClick={simulate}
                 className="flex-1 rounded-lg border border-ink-600 py-3 text-sm font-semibold text-slate-strong hover:border-slate-mid hover:text-bone"
@@ -242,7 +242,7 @@ export default function Draft() {
   }
 
   return (
-    <div className="grid grid-cols-1 gap-8 lg:grid-cols-[2fr_3fr]">
+    <div className="grid grid-cols-1 gap-6 lg:grid-cols-[2fr_3fr] lg:gap-8">
       {stinger && (
         <Stinger
           eyebrow="El Copero del Dota"
@@ -251,7 +251,9 @@ export default function Draft() {
           onDone={() => setStinger(false)}
         />
       )}
-      <section>
+      {/* On phones the pack (the thing you act on) comes first; the full board
+          follows below, with RosterStrip keeping the essentials in view. */}
+      <section className="order-2 lg:order-1">
         <RosterBoard slots={slots} heroes={heroes} strength={strength} heroById={heroById} />
         {manual && complete && (
           <ManualAssign
@@ -263,9 +265,10 @@ export default function Draft() {
         )}
       </section>
 
-      <section>
+      <section className="order-1 lg:order-2">
         {!complete && current && !stinger && (
           <div>
+            <RosterStrip slots={slots} heroes={heroes} strength={strength} heroById={heroById} />
             <div className="mb-4 flex items-end justify-between gap-3">
               {/* pack banner — slams in with every fresh pack */}
               <div key={current.id} className="anim-slam-l min-w-0">
@@ -285,13 +288,14 @@ export default function Draft() {
               <button
                 onClick={() => reroll(pool)}
                 disabled={rerollsLeft <= 0}
-                className={`shrink-0 rounded-lg border px-4 py-2 text-sm font-semibold transition ${
+                className={`shrink-0 rounded-lg border px-3 py-2 text-sm font-semibold transition sm:px-4 ${
                   rerollsLeft > 0
                     ? "border-ink-600 text-slate-strong hover:border-slate-mid hover:text-bone"
                     : "cursor-not-allowed border-ink-700 text-slate-dim"
                 }`}
               >
-                Reroll pack ({rerollsLeft})
+                <span className="hidden sm:inline">Reroll pack</span>
+                <span className="sm:hidden">Reroll</span> ({rerollsLeft})
               </button>
             </div>
 

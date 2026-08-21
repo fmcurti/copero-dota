@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CardButton, HeroCardContent, PlayerCardContent, ROLE_BAR, ovrColor } from "../../components/cards";
+import { RosterStrip } from "../../components/RosterBoard";
 import { HumanTeamBadge } from "../../components/HumanTeamBadge";
 import { SLOT_IDS, type Slots } from "../../game/draft";
 import { eventShortName, heroImage } from "../../game/data";
@@ -68,7 +69,8 @@ function SynergyTag({
           )
           .join("\n")}
       >
-        +{top.bonus} c/ {names}
+        +{top.bonus}
+        <span className="hidden sm:inline"> c/ {names}</span>
       </span>
     );
   }
@@ -79,7 +81,8 @@ function SynergyTag({
         className="absolute right-1.5 top-2.5 z-10 rounded-sm border border-ink-600 bg-ink-950/85 px-1 py-0.5 text-[10px] text-slate-mid"
         title={`${hints.bestUndrafted.games} games with ${nick}, who is still undrafted`}
       >
-        {hints.bestUndrafted.games}g c/ {nick}
+        {hints.bestUndrafted.games}g
+        <span className="hidden sm:inline"> c/ {nick}</span>
       </span>
     );
   }
@@ -345,6 +348,14 @@ export function DraftView({
         <TurnTimer deadline={myDeadline} totalSecs={snapshot.config.timerSecs} />
       )}
       <section>
+        {myBoard && (
+          <RosterStrip
+            slots={myBoard.slots as Slots}
+            heroes={myBoard.heroes}
+            strength={strengths[mySeat]}
+            heroById={heroById}
+          />
+        )}
         <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
           <div>
             <div className="plate text-sm tracking-widest text-slate-dim">
@@ -367,7 +378,7 @@ export function DraftView({
               {myTurn && !denyArmed && <span className="live-dot" />}
               {myTurn
                 ? denyArmed
-                  ? "DENY MODE — click any card to destroy it"
+                  ? "DENY MODE — choose any card to destroy it"
                   : "Your pick"
                 : turbo
                   ? mySeat >= 0
@@ -561,22 +572,25 @@ export function DraftView({
           <div className="plate text-sm tracking-widest text-slate-dim">Boards</div>
           <SoundControl />
         </div>
-        {seats.map((s, i) => (
-          <MiniBoard
-            key={s.playerId}
-            name={s.name}
-            board={d.boards[i]}
-            strength={strengths[i]}
-            isMe={i === mySeat}
-            isTurn={turbo ? heldBySeat[i] > 0 : d.turnSeat === i}
-            isOpener={!turbo && d.openerSeat === i}
-            connected={s.connected}
-            mulligans={d.mulligansLeft[i]}
-            denies={d.deniesLeft[i]}
-            heroById={heroById}
-            queued={heldBySeat[i]}
-          />
-        ))}
+        {/* Phones stack the boards, tablets pair them, the desktop rail is one column. */}
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
+          {seats.map((s, i) => (
+            <MiniBoard
+              key={s.playerId}
+              name={s.name}
+              board={d.boards[i]}
+              strength={strengths[i]}
+              isMe={i === mySeat}
+              isTurn={turbo ? heldBySeat[i] > 0 : d.turnSeat === i}
+              isOpener={!turbo && d.openerSeat === i}
+              connected={s.connected}
+              mulligans={d.mulligansLeft[i]}
+              denies={d.deniesLeft[i]}
+              heroById={heroById}
+              queued={heldBySeat[i]}
+            />
+          ))}
+        </div>
         <ChatPanel
           chat={snapshot.chat}
           myId={mySeat >= 0 ? seats[mySeat].playerId : null}

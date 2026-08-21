@@ -50,7 +50,7 @@ export function WinPhrasesEditor() {
                   else if (e.key === "Escape") setEditingIdx(null);
                 }}
                 maxLength={MAX_WIN_PHRASE_LEN}
-                className="plate-italic w-full rounded-lg border border-ink-700 bg-ink-900/40 px-3 py-2 text-sm normal-case text-bone outline-none"
+                className="plate-italic w-full rounded-lg border border-ink-700 bg-ink-900/40 px-3 py-2 text-base normal-case text-bone outline-none sm:text-sm"
               />
             ) : (
               <div
@@ -67,7 +67,7 @@ export function WinPhrasesEditor() {
                 <button
                   onClick={() => remove(i)}
                   title="Delete phrase"
-                  className="shrink-0 rounded border border-ink-700 px-1.5 text-xs text-slate-dim transition hover:border-dire-dim hover:text-dire"
+                  className="shrink-0 rounded border border-ink-700 px-2 py-1 text-xs text-slate-dim transition hover:border-dire-dim hover:text-dire"
                 >
                   ✕
                 </button>
@@ -84,7 +84,7 @@ export function WinPhrasesEditor() {
             onKeyDown={(e) => e.key === "Enter" && add()}
             placeholder="ez game, ez life…"
             maxLength={MAX_WIN_PHRASE_LEN}
-            className="min-w-0 flex-1 rounded-lg border border-ink-700 bg-ink-900/40 px-4 py-2.5 text-sm text-bone outline-none focus:border-slate-mid"
+            className="min-w-0 flex-1 rounded-lg border border-ink-700 bg-ink-900/40 px-4 py-2.5 text-base text-bone outline-none focus:border-slate-mid sm:text-sm"
           />
           <button
             onClick={add}

@@ -83,7 +83,7 @@ export default function QueueDock() {
         <CheckStage check={queued ? check : null} matched={matched} />
       )}
       {!queued && notice && (
-        <div className="beat-in fixed bottom-4 right-4 z-40">
+        <div className="beat-in bottom-safe-4 fixed right-4 z-40">
           <div className="panel rounded-lg border-dire-dim px-4 py-3 text-sm text-dire">
             {notice}
           </div>
@@ -196,8 +196,8 @@ function MatchFinder() {
   );
 
   return (
-    <div className="beat-in fixed bottom-5 right-5 z-40">
-      <div className="finder w-[400px] max-w-[calc(100vw-2.5rem)] rounded-[3px]">
+    <div className="beat-in bottom-safe-4 fixed right-4 z-40 sm:bottom-safe-5 sm:right-5">
+      <div className="finder w-[400px] max-w-[calc(100vw-2rem)] rounded-[3px]">
         <div className="flex items-baseline justify-between gap-3 border-b border-[#8caac3]/15 px-4 pb-1.5 pt-2">
           <span
             className={`plate min-w-0 truncate text-[11px] tracking-[0.2em] ${
@@ -212,11 +212,11 @@ function MatchFinder() {
         </div>
         <div className="flex items-center justify-between gap-4 px-4 py-3">
           {fillSecs != null ? (
-            <div className="anim-urgent plate text-[27px] font-bold leading-none tracking-[0.14em] text-trophy">
+            <div className="anim-urgent plate text-[22px] font-bold leading-none tracking-[0.14em] text-trophy sm:text-[27px]">
               Confirming match
             </div>
           ) : (
-            <div className="finding-glow plate text-[27px] font-bold leading-none tracking-[0.14em]">
+            <div className="finding-glow plate text-[22px] font-bold leading-none tracking-[0.14em] sm:text-[27px]">
               Finding match
             </div>
           )}

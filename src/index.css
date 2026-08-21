@@ -50,6 +50,31 @@
 
 body {
   @apply bg-ink-950 text-slate-strong antialiased;
+  /* phones: no 300ms tap delay, no grey tap flash, no rubber-band past the
+     edges of a fixed overlay; the arena bg reaches under the notch. */
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+}
+
+/* Safe-area offsets for the things pinned to the screen edges (timer, chat,
+   finder, clash strip). Zero on desktops; the home-indicator inset on phones. */
+@utility bottom-safe-4 {
+  bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+}
+@utility bottom-safe-5 {
+  bottom: calc(1.25rem + env(safe-area-inset-bottom, 0px));
+}
+@utility pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+/* Horizontal scrollers (the nav, the bracket) without a visible bar. */
+@utility scrollbar-none {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 @layer base {
