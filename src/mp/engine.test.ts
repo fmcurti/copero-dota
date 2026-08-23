@@ -7,6 +7,8 @@ import { mulberry32, type Rng } from "../game/rng";
 import { autopick } from "./autopick";
 import {
   activePackIndex,
+  activePackIndices,
+  handsHeld,
   applyAction,
   boardComplete,
   createDraft,
@@ -597,6 +599,96 @@ describe("turbo deny and mulligan", () => {
   });
 });
 
+describe("turbo double hands (5+ seats)", () => {
+  it("deals two packs per seat, held and picked from as one hand", () => {
+    const s = dealTurbo(turboDraft(5), makePool(), mulberry32(30));
+    expect(s.currentPacks).toHaveLength(10);
+    expect(s.packSeq).toBe(10);
+    for (let seat = 0; seat < 5; seat++) {
+      const hand = activePackIndices(s, seat);
+      expect(hand).toHaveLength(2);
+      expect(hand.map((i) => s.packDealtTo[i])).toEqual([seat, seat]);
+      expect(hand.map((i) => s.packPassCount[i])).toEqual([0, 0]);
+      expect(handsHeld(s, seat)).toBe(1);
+      // one hand never shows the same hero twice
+      const heroes = hand.flatMap((i) => s.currentPacks[i].heroes);
+      expect(new Set(heroes).size).toBe(heroes.length);
+      // legal picks span both packs of the hand
+      const picks = legalActions(s, seat).picks;
+      const perPack = hand.map(
+        (i) =>
+          picks.filter(
+            (c) =>
+              c.kind === "player" &&
+              s.currentPacks[i].players.some((x) => x.steamId === c.steamId),
+          ).length,
+      );
+      expect(perPack.every((n) => n > 0)).toBe(true);
+    }
+  });
+
+  it("one pick from either pack sends the whole hand down the chain", () => {
+    let s = dealTurbo(turboDraft(5), makePool(), mulberry32(31));
+    const [a, b] = activePackIndices(s, 0);
+    const ids = [s.currentPacks[a].id, s.currentPacks[b].id];
+    // pick from the second pack of the hand
+    const second = s.currentPacks[b].players[0];
+    s = applyAction(s, 0, { type: "pick", card: { kind: "player", steamId: second.steamId } }).state;
+    const moved = s.currentPacks.map((p, i) => [p.id, packHolder(s, i), s.packPassCount[i]] as const)
+      .filter(([id]) => ids.includes(id));
+    expect(moved).toHaveLength(2);
+    expect(moved.every(([, holder, passes]) => holder === 1 && passes === 1)).toBe(true);
+    // seat 0 holds nothing; seat 1 has its own hand in play and the arrival queued
+    expect(activePackIndices(s, 0)).toEqual([]);
+    expect(handsHeld(s, 1)).toBe(2);
+    expect(activePackIndices(s, 1).map((i) => s.packPassCount[i])).toEqual([0, 0]);
+  });
+
+  it("mulligan burns the whole hand and the seat gets a fresh pair back", () => {
+    let s = dealTurbo(createDraft(5, { mulligans: 1, mode: "turbo" }), makePool(), mulberry32(32));
+    const burned = activePackIndices(s, 2).map((i) => s.currentPacks[i].id);
+    s = applyAction(s, 2, { type: "mulligan" }).state;
+    expect(s.owedPacks).toEqual([2, 2]);
+    expect(s.currentPacks).toHaveLength(8);
+    s = dealTurbo(s, makePool(), mulberry32(33));
+    const hand = activePackIndices(s, 2);
+    expect(hand).toHaveLength(2);
+    expect(hand.map((i) => s.packPassCount[i])).toEqual([0, 0]);
+    expect(hand.some((i) => burned.includes(s.currentPacks[i].id))).toBe(false);
+    expect(legalActions(s, 2).canMulligan).toBe(false);
+  });
+
+  it("the skip rule moves a hand only when neither pack has anything for its holder", () => {
+    const blocked = makePack(1, ["safelane", "safelane", "safelane", "safelane", "safelane"], 10);
+    const open = makePack(2, FULL_ROLES, 20);
+    const s = turboDraft(5);
+    s.boards[1] = board(
+      {
+        safelane: makePlayer(9001, "safelane"),
+        offlane: makePlayer(9002, "offlane"),
+        support1: makePlayer(9003, "support"),
+        support2: makePlayer(9004, "support"),
+      },
+      [11, 12, 13, 14, 15],
+    );
+    s.takenSteamIds = [9001, 9002, 9003, 9004];
+    s.currentPacks = [materialize(blocked, mulberry32(7)), materialize(open, mulberry32(7))];
+    s.packDealtTo = [0, 0];
+    s.packPassCount = [0, 0];
+    s.usedPackIds = [blocked.id, open.id];
+    // seat 0 acts on the blocked pack; the open pack keeps the hand at seat 1
+    let t = applyAction(s, 0, { type: "pick", card: legalActions(s, 0).picks[0] }).state;
+    expect(t.packPassCount).toEqual([1, 1]);
+    expect(activePackIndices(t, 1)).toEqual([0, 1]);
+    // with the open pack's mid gone too, seat 1 has nothing: the pair skips on together
+    const u = { ...s, currentPacks: [s.currentPacks[0], materialize(blocked, mulberry32(7))] };
+    t = applyAction(u, 0, { type: "pick", card: legalActions(u, 0).picks[0] }).state;
+    expect(t.packPassCount).toEqual([2, 2]);
+    expect(packHolder(t, 0)).toBe(2);
+    expect(packHolder(t, 1)).toBe(2);
+  });
+});
+
 describe("turbo full drafts", () => {
   it("greedy chains complete with legal boards at every table size", () => {
     for (const seats of [2, 3, 4, 5, 6, 8]) {
@@ -623,11 +715,11 @@ describe("turbo full drafts", () => {
             options.push(() => applyAction(st, seat, { type: "pick", card: pick }));
           }
           if (legal.canDeny) {
-            const pack = st.currentPacks[activePackIndex(st, seat)];
-            const cards: CardRef[] = [
+            const hand = activePackIndices(st, seat).map((i) => st.currentPacks[i]);
+            const cards: CardRef[] = hand.flatMap((pack) => [
               ...pack.players.map((x) => ({ kind: "player" as const, steamId: x.steamId })),
               ...pack.heroes.map((h) => ({ kind: "hero" as const, heroId: h })),
-            ];
+            ]);
             options.push(() =>
               applyAction(st, seat, { type: "deny", card: cards[Math.floor(rng() * cards.length)] }),
             );

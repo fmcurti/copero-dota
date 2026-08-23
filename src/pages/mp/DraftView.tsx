@@ -7,8 +7,9 @@ import { eventShortName, heroImage } from "../../game/data";
 import { computeStrength, heroFitBonus } from "../../game/strength";
 import type { DataBundle, Hero, RosterPlayer, TeamStrength } from "../../game/types";
 import {
-  activePackIndex,
+  activePackIndices,
   boardComplete,
+  handsHeld,
   legalActions,
   packHolder,
   type Board,
@@ -263,17 +264,17 @@ export function DraftView({
         : { picks: [], canDeny: false, canPass: false, canMulligan: false },
     [d, mySeat],
   );
-  // Turbo: my "turn" is the pack in my hands (packs queue behind it while
-  // I think); classic: the one shared turn seat.
-  const myPackIdx = turbo && mySeat >= 0 ? activePackIndex(d, mySeat) : -1;
-  const myTurn = mySeat >= 0 && (turbo ? myPackIdx >= 0 : d.turnSeat === mySeat);
-  const myPackKey =
-    turbo && myPackIdx >= 0 ? `${d.roundSeq}:${d.currentPacks[myPackIdx].id}` : null;
+  // Turbo: my "turn" is the hand I hold — one pack, or two at 5+ seats, picked
+  // from as one spread (hands queue behind it while I think); classic: the one
+  // shared turn seat.
+  const myHand = useMemo(
+    () => (turbo && mySeat >= 0 ? activePackIndices(d, mySeat) : []),
+    [turbo, d, mySeat],
+  );
+  const myTurn = mySeat >= 0 && (turbo ? myHand.length > 0 : d.turnSeat === mySeat);
+  const myPackKey = myHand.length ? `${d.roundSeq}:${d.currentPacks[myHand[0]].id}` : null;
   const heldBySeat = useMemo(
-    () =>
-      seats.map((_, i) =>
-        turbo ? d.currentPacks.filter((_, pi) => packHolder(d, pi) === i).length : 0,
-      ),
+    () => seats.map((_, i) => (turbo ? handsHeld(d, i) : 0)),
     [turbo, d, seats],
   );
   const [denyArmed, setDenyArmed] = useState(false);
@@ -328,10 +329,9 @@ export function DraftView({
     [d.boards, bundle],
   );
 
-  // Turbo: a seated drafter acts only on the pack in their hands; spectators
+  // Turbo: a seated drafter acts only on the hand they hold; spectators
   // (and classic tables) see every open pack.
-  const shownPacks =
-    turbo && mySeat >= 0 ? (myPackIdx >= 0 ? [myPackIdx] : []) : d.currentPacks.map((_, i) => i);
+  const shownPacks = turbo && mySeat >= 0 ? myHand : d.currentPacks.map((_, i) => i);
 
   const act = (card: CardRef) => {
     if (denyArmed) {
@@ -360,7 +360,10 @@ export function DraftView({
           <div>
             <div className="plate text-sm tracking-widest text-slate-dim">
               {turbo ? (
-                <>Wave #{d.roundSeq} — everyone picks at once</>
+                <>
+                  Wave #{d.roundSeq} — everyone picks at once
+                  {seats.length > 4 && ", one card from a double hand"}
+                </>
               ) : (
                 <>
                   Round #{d.roundSeq} — {seats[d.openerSeat]?.name} opens
@@ -401,8 +404,8 @@ export function DraftView({
         <div key={`${d.roundSeq}`}>
           {shownPacks.map((packIdx, order) => {
             const pack = d.currentPacks[packIdx];
-            // In turbo only the pack in my hands is actionable; spectators act on nothing.
-            const actionable = turbo ? myTurn && packIdx === myPackIdx : myTurn;
+            // In turbo only the hand I hold is actionable; spectators act on nothing.
+            const actionable = turbo ? myTurn && myHand.includes(packIdx) : myTurn;
             return (
               <div key={pack.id} className={order > 0 ? "mt-6" : ""}>
                 <div className="mb-2 text-lg font-bold text-bone">
@@ -413,7 +416,7 @@ export function DraftView({
                     {turbo && mySeat < 0 && (
                       <> · en manos de {seats[packHolder(d, packIdx)]?.name}</>
                     )}
-                    {turbo && mySeat >= 0 && heldBySeat[mySeat] > 1 && (
+                    {turbo && mySeat >= 0 && order === 0 && heldBySeat[mySeat] > 1 && (
                       <> · +{heldBySeat[mySeat] - 1} en cola</>
                     )}
                   </span>
@@ -467,7 +470,7 @@ export function DraftView({
               </div>
             );
           })}
-          {turbo && mySeat >= 0 && myPackIdx < 0 && (
+          {turbo && mySeat >= 0 && myHand.length === 0 && (
             <div className="rounded-xl border border-dashed border-ink-700 bg-ink-900/30 px-4 py-10 text-center text-sm text-slate-mid">
               {myBoard && boardComplete(myBoard)
                 ? "Tu board está completo — esperando a que terminen los demás…"

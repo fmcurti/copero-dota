@@ -32,13 +32,16 @@ import type { Pack, RosterPlayer } from "../game/types";
 //   destroyed for everyone; a denied hero only leaves this pack.
 //
 //   TURBO mode replaces the shared table with a booster chain: every
-//   incomplete seat is dealt its own pack (a wave), everyone picks at once,
-//   and each pack's leftovers pass to the next seat — queueing there if that
-//   seat is still busy. A pack an arriving seat cannot pick from passes
-//   through by itself (the skip rule, no penalty), a pack every seat has
-//   acted on is discarded, and a new wave is dealt when the previous one is
-//   gone. Deny burns your pick on the pack in your hands; mulligan burns a
-//   freshly dealt pack for a replacement before anyone has acted on it.
+//   incomplete seat is dealt its own hand (a wave), everyone picks at once,
+//   and each hand's leftovers pass to the next seat — queueing there if that
+//   seat is still busy. A hand is as many packs as a classic spread opens
+//   (one for 2-4 seats, two for 5+) and moves down the chain as one unit:
+//   you pick a single card from either pack, exactly like a classic double
+//   spread. A hand an arriving seat cannot pick from passes through by
+//   itself (the skip rule, no penalty), a pack every seat has acted on is
+//   discarded, and a new wave is dealt when the previous one is gone. Deny
+//   burns your pick on the hand you hold; mulligan burns a freshly dealt
+//   hand for a replacement before anyone has acted on it.
 // ---------------------------------------------------------------------------
 
 export const DENIES_PER_GAME = 1;
@@ -74,7 +77,8 @@ export interface EngineState {
   openerSeat: number;
   turnSeat: number | null;
   /** The open spread: 1 pack for 2-4 seats, 2 packs for 5+. Empty between rounds.
-   *  In turbo, every in-flight pack of the current wave. */
+   *  In turbo, every in-flight pack of the current wave (a 5+ seat hand is
+   *  two packs, parallel entries that move together). */
   currentPacks: DrawnPack[];
   /** Turbo: the seat each current pack was dealt to (parallel to currentPacks). */
   packDealtTo: number[];
@@ -167,17 +171,45 @@ export function packHolder(s: DraftLegalityState, i: number): number {
 }
 
 /**
- * Turbo: the pack this seat must act on now, or -1. Packs queue in arrival
- * order — the pass count of a held pack IS its chain distance to this seat,
- * so the least-passed pack in hand is the one that got here first.
+ * Turbo: the hand this seat must act on now — every pack it holds at its
+ * lowest pass count. Hands queue in arrival order (the pass count of a held
+ * pack IS its chain distance to this seat, so the least-passed packs got
+ * here first), and the packs of one hand share a deal seat and a pass count
+ * for life (same holder + same pass count ⇒ same deal seat ⇒ dealt as one
+ * hand), so the tie at the minimum is exactly the hand. Empty when idle.
  */
-export function activePackIndex(s: DraftLegalityState, seat: number): number {
-  let best = -1;
+export function activePackIndices(s: DraftLegalityState, seat: number): number[] {
+  const hand: number[] = [];
+  let best = Infinity;
   for (let i = 0; i < s.currentPacks.length; i++) {
     if (packHolder(s, i) !== seat) continue;
-    if (best < 0 || s.packPassCount[i] < s.packPassCount[best]) best = i;
+    const c = s.packPassCount[i];
+    if (c < best) {
+      best = c;
+      hand.length = 0;
+    }
+    if (c === best) hand.push(i);
   }
-  return best;
+  return hand;
+}
+
+/** Turbo: the first pack of the hand this seat must act on, or -1 when idle. */
+export function activePackIndex(s: DraftLegalityState, seat: number): number {
+  return activePackIndices(s, seat)[0] ?? -1;
+}
+
+/** Turbo: how many hands a seat is holding — the one in play plus the queue. */
+export function handsHeld(s: DraftLegalityState, seat: number): number {
+  const counts = new Set<number>();
+  for (let i = 0; i < s.currentPacks.length; i++) {
+    if (packHolder(s, i) === seat) counts.add(s.packPassCount[i]);
+  }
+  return counts.size;
+}
+
+/** Turbo: legal picks across the whole hand a seat holds. */
+function handPicks(s: DraftLegalityState, seat: number): CardRef[] {
+  return activePackIndices(s, seat).flatMap((i) => packPicks(s, seat, i));
 }
 
 /** Legal picks for a seat from one specific pack of the wave. */
@@ -198,10 +230,7 @@ function packPicks(s: DraftLegalityState, seat: number, packIdx: number): CardRe
 
 /** Legal picks for a seat across the whole spread (off-turn callers get the same answer). */
 export function legalPicks(s: DraftLegalityState, seat: number): CardRef[] {
-  if (s.mode === "turbo") {
-    const i = activePackIndex(s, seat);
-    return i >= 0 ? packPicks(s, seat, i) : [];
-  }
+  if (s.mode === "turbo") return handPicks(s, seat);
   if (!s.currentPacks.length) return [];
   const b = s.boards[seat];
   if (boardComplete(b)) return [];
@@ -340,9 +369,10 @@ export function openSpread(s: EngineState, pool: Pack[], rng: Rng): EngineState 
 
 /**
  * Turbo: run the chain until it is stable — discard packs every seat has
- * acted on, pass packs their holder cannot pick from (the skip rule, no
- * penalty), and finish the draft the moment every board holds 5+5 (any
- * packs still in flight are simply dropped).
+ * acted on, pass hands their holder cannot pick from at all (the skip rule,
+ * no penalty; a hand moves as one, so a pickable sibling keeps both packs),
+ * and finish the draft the moment every board holds 5+5 (any packs still in
+ * flight are simply dropped).
  */
 function settleTurbo(s: EngineState): EngineState {
   if (allBoardsComplete(s)) {
@@ -362,26 +392,33 @@ function settleTurbo(s: EngineState): EngineState {
     packDealtTo: [...s.packDealtTo],
     packPassCount: [...s.packPassCount],
   };
-  for (let i = 0; i < next.currentPacks.length; ) {
-    if (next.packPassCount[i] >= next.numSeats) {
-      next.currentPacks.splice(i, 1);
-      next.packDealtTo.splice(i, 1);
-      next.packPassCount.splice(i, 1);
-      continue; // re-check the pack that slid into i
+  for (let moved = true; moved; ) {
+    moved = false;
+    for (let i = 0; i < next.currentPacks.length; ) {
+      if (next.packPassCount[i] >= next.numSeats) {
+        next.currentPacks.splice(i, 1);
+        next.packDealtTo.splice(i, 1);
+        next.packPassCount.splice(i, 1);
+        continue; // re-check the pack that slid into i
+      }
+      i++;
     }
-    if (packPicks(next, packHolder(next, i), i).length === 0) {
-      next.packPassCount[i]++;
-      continue; // same pack, next seat down the chain
+    for (let seat = 0; seat < next.numSeats; seat++) {
+      const hand = activePackIndices(next, seat);
+      if (!hand.length || hand.some((i) => packPicks(next, seat, i).length > 0)) continue;
+      for (const i of hand) next.packPassCount[i]++; // whole hand, next seat down the chain
+      moved = true;
     }
-    i++;
   }
   return next;
 }
 
 /**
  * Turbo dealing: replacements owed by mulligans first, otherwise a fresh
- * wave — one pack per incomplete seat, dealt to that seat. Empty between
- * waves, the room server calls this like it calls openSpread.
+ * wave — one hand per incomplete seat, dealt to that seat. A hand is
+ * packsPerSpread packs, so a 5+ seat table sees the same double spread it
+ * would in classic. Empty between waves, the room server calls this like it
+ * calls openSpread.
  */
 export function dealTurbo(s: EngineState, pool: Pack[], rng: Rng): EngineState {
   if (s.done) return s;
@@ -392,7 +429,10 @@ export function dealTurbo(s: EngineState, pool: Pack[], rng: Rng): EngineState {
   } else if (!s.currentPacks.length) {
     next = { ...next, roundSeq: next.roundSeq + 1 };
     for (let seat = 0; seat < s.numSeats; seat++) {
-      if (!boardComplete(next.boards[seat])) next = dealPackTo(next, seat, pool, rng);
+      if (boardComplete(next.boards[seat])) continue;
+      for (let k = 0; k < packsPerSpread(s.numSeats); k++) {
+        next = dealPackTo(next, seat, pool, rng);
+      }
     }
   }
   return settleTurbo(next);
@@ -425,11 +465,24 @@ function dealPackTo(s: EngineState, seat: number, pool: Pack[], rng: Rng): Engin
   const source = anyOk.length ? anyOk : candidates;
   const pack = source[Math.floor(rng() * source.length)];
   let d = materialize(pack, rng);
+  // A double hand never shows the same hero twice: dedupe against the packs
+  // already dealt into this seat's fresh hand (same deal seat, zero passes).
+  const shown = new Set(
+    s.currentPacks
+      .filter((_, i) => s.packDealtTo[i] === seat && s.packPassCount[i] === 0)
+      .flatMap((p) => p.heroes),
+  );
+  if (d.heroes.some((h) => shown.has(h))) {
+    const kept = d.heroes.filter((h) => !shown.has(h));
+    const extras = pack.signatureHeroes.filter((h) => !shown.has(h) && !kept.includes(h));
+    while (kept.length < d.heroes.length && extras.length) kept.push(extras.shift()!);
+    d = { ...d, heroes: kept };
+  }
   const canPick =
     d.players.some((p) => canPickPlayer(p, b.slots, taken)) ||
     d.heroes.some((h) => canPickHero(h, b.heroes));
   if (!canPick) {
-    const swap = pack.signatureHeroes.find((h) => canPickHero(h, b.heroes));
+    const swap = pack.signatureHeroes.find((h) => !shown.has(h) && canPickHero(h, b.heroes));
     if (swap != null) d = { ...d, heroes: [...d.heroes.slice(0, d.heroes.length - 1), swap] };
   }
   return {
@@ -447,16 +500,16 @@ export function legalActions(
   seat: number,
 ): { picks: CardRef[]; canDeny: boolean; canPass: boolean; canMulligan: boolean } {
   if (s.mode === "turbo") {
-    const i = activePackIndex(s, seat);
-    const picks = i >= 0 ? packPicks(s, seat, i) : [];
+    const hand = activePackIndices(s, seat);
+    const picks = handPicks(s, seat);
     return {
       picks,
-      // Deny replaces your pick, so only the pack in your hands qualifies.
+      // Deny replaces your pick, so only the hand you hold qualifies.
       canDeny: picks.length > 0 && s.deniesLeft[seat] > 0,
-      // A pack you cannot pick from never reaches you — it passes by itself.
+      // A hand you cannot pick from never reaches you — it passes by itself.
       canPass: false,
       // "Before anyone acts": zero passes means you are its first holder.
-      canMulligan: i >= 0 && s.packPassCount[i] === 0 && s.mulligansLeft[seat] > 0,
+      canMulligan: hand.length > 0 && s.packPassCount[hand[0]] === 0 && s.mulligansLeft[seat] > 0,
     };
   }
   const myTurn = s.turnSeat === seat && s.currentPacks.length > 0;
@@ -612,9 +665,10 @@ export function applyAction(
 }
 
 /**
- * Turbo actions run against the pack in the seat's hands — there is no shared
- * turn, so any seat holding a pack may act at any moment. Acting counts as
- * this seat's pass on that pack: the leftovers move down the chain.
+ * Turbo actions run against the hand the seat holds — there is no shared
+ * turn, so any seat holding a hand may act at any moment. Acting counts as
+ * this seat's pass on every pack of that hand: the leftovers move down the
+ * chain together.
  */
 function applyTurbo(
   s: EngineState,
@@ -622,26 +676,27 @@ function applyTurbo(
   action: Action,
 ): { state: EngineState; error?: string } {
   if (seat < 0 || seat >= s.numSeats) return fail(s, "bad-seat");
-  const pi = activePackIndex(s, seat);
-  if (pi < 0) return fail(s, "no-pack");
+  const hand = activePackIndices(s, seat);
+  if (!hand.length) return fail(s, "no-pack");
   const legal = legalActions(s, seat);
 
-  // A pack with nothing for you never waits in your hands — it passes itself.
+  // A hand with nothing for you never waits in your hands — it passes itself.
   if (action.type === "pass") return fail(s, "cannot-pass");
 
   if (action.type === "mulligan") {
     if (!legal.canMulligan) return fail(s, "illegal-mulligan");
     const mulligansLeft = [...s.mulligansLeft];
     mulligansLeft[seat]--;
-    // Burn the freshly dealt pack; the room deals this seat a replacement.
+    // Burn the freshly dealt hand; the room deals this seat one replacement per pack.
+    const burned = new Set(hand);
     return {
       state: settleTurbo({
         ...s,
         mulligansLeft,
-        currentPacks: s.currentPacks.filter((_, i) => i !== pi),
-        packDealtTo: s.packDealtTo.filter((_, i) => i !== pi),
-        packPassCount: s.packPassCount.filter((_, i) => i !== pi),
-        owedPacks: [...s.owedPacks, seat],
+        currentPacks: s.currentPacks.filter((_, i) => !burned.has(i)),
+        packDealtTo: s.packDealtTo.filter((_, i) => !burned.has(i)),
+        packPassCount: s.packPassCount.filter((_, i) => !burned.has(i)),
+        owedPacks: [...s.owedPacks, ...hand.map(() => seat)],
       }),
     };
   }
@@ -649,23 +704,27 @@ function applyTurbo(
   const passOn = (next: EngineState): EngineState =>
     settleTurbo({
       ...next,
-      packPassCount: next.packPassCount.map((c, i) => (i === pi ? c + 1 : c)),
+      packPassCount: next.packPassCount.map((c, i) => (hand.includes(i) ? c + 1 : c)),
     });
+  const packInHand = (card: CardRef): number =>
+    hand.find((i) =>
+      card.kind === "player"
+        ? s.currentPacks[i].players.some((x) => x.steamId === card.steamId)
+        : s.currentPacks[i].heroes.includes(card.heroId),
+    ) ?? -1;
 
   if (action.type === "pick") {
     if (!legal.picks.some((c) => sameRef(c, action.card))) return fail(s, "illegal-pick");
+    const pi = packInHand(action.card);
+    if (pi < 0) return fail(s, "card-not-in-pack");
     return { state: passOn(pickCard(s, seat, pi, action.card)) };
   }
 
   if (action.type === "deny") {
     if (!legal.canDeny) return fail(s, "cannot-deny");
-    const card = action.card;
-    const inPack =
-      card.kind === "player"
-        ? s.currentPacks[pi].players.some((x) => x.steamId === card.steamId)
-        : s.currentPacks[pi].heroes.includes(card.heroId);
-    if (!inPack) return fail(s, "card-not-in-pack");
-    return { state: passOn(denyCard(s, seat, pi, card)) };
+    const pi = packInHand(action.card);
+    if (pi < 0) return fail(s, "card-not-in-pack");
+    return { state: passOn(denyCard(s, seat, pi, action.card)) };
   }
 
   return fail(s, "unknown-action");
