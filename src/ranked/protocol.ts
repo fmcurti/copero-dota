@@ -40,12 +40,14 @@ export const RANKED_SEASON = 1;
 
 /**
  * The one ranked ruleset — no host exists to configure anything. Defaults,
- * except per-event OVRs, and spectatable so finished lobbies appear on the
- * watch tab once the draft starts (never as joinable).
+ * except per-event OVRs, turbo drafting (every seat picks at once, so a
+ * ranked match never waits on one slow seat), and spectatable so finished
+ * lobbies appear on the watch tab once the draft starts (never as joinable).
  */
 export const RANKED_CONFIG: MpConfig = {
   ...DEFAULT_MP_CONFIG,
   cardMode: "event",
+  draftMode: "turbo",
   visibility: "spectatable",
 };
 

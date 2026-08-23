@@ -116,12 +116,19 @@ function lobbyAB(over: Partial<RoomCtx> = {}): TestRoom {
   return room;
 }
 
-/** Run a started draft to completion via alarm autopicks. */
+/** Run a started draft to completion via alarm autopicks — the shared clock
+ *  in classic, the earliest per-seat clock in turbo. */
 function draftToDone(room: TestRoom) {
   for (let guard = 0; room.state.phase === "drafting"; guard++) {
     if (guard > 300) throw new Error("draft did not terminate");
-    expect(room.state.turnDeadline).not.toBeNull();
-    room.send({ type: "alarm" }, { now: room.state.turnDeadline! });
+    if (room.state.engine?.mode === "turbo") {
+      const armed = room.state.turnDeadlines!.filter((d): d is number => d != null);
+      expect(armed.length).toBeGreaterThan(0);
+      room.send({ type: "alarm" }, { now: Math.min(...armed) });
+    } else {
+      expect(room.state.turnDeadline).not.toBeNull();
+      room.send({ type: "alarm" }, { now: room.state.turnDeadline! });
+    }
   }
 }
 
@@ -388,14 +395,7 @@ describe("turbo rooms", () => {
   }
 
   /** Run a turbo draft to completion via per-seat alarm autopicks. */
-  function turboToDone(room: TestRoom) {
-    for (let guard = 0; room.state.phase === "drafting"; guard++) {
-      if (guard > 300) throw new Error("draft did not terminate");
-      const armed = room.state.turnDeadlines!.filter((d): d is number => d != null);
-      expect(armed.length).toBeGreaterThan(0);
-      room.send({ type: "alarm" }, { now: Math.min(...armed) });
-    }
-  }
+  const turboToDone = draftToDone;
 
   it("sanitizes draftMode and locks it into the engine on start", () => {
     const room = lobbyAB();
