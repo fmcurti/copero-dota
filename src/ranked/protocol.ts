@@ -64,7 +64,14 @@ export const makeRankedCode = (): string => makeRoomCode(8);
 
 export interface LeaderboardRow {
   userId: string;
+  /** The nickname (Better Auth's user name, editable on the profile page). */
   name: string;
+  /**
+   * Who is behind the nickname: the Google account name when they signed in
+   * with Google, otherwise the part of their email before the `@`. Never the
+   * full email — the hub is public.
+   */
+  account: string;
   image: string | null;
   rating: number;
   gamesPlayed: number;

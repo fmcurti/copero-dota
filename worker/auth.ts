@@ -87,6 +87,61 @@ export function userWritePatch(
   return patch;
 }
 
+// ---------------------------------------------------------------------------
+// The name behind the nickname. Better Auth writes Google's profile name into
+// `user.name` at sign-up, but that is the nickname — editable, and the ladder
+// still wants to say who a "Rubick enjoyer" actually is. The Google account
+// row keeps the OIDC ID token (refreshed on every sign-in), whose `name`
+// claim is exactly that; the account hooks below copy it into
+// `user.accountName`, a field no client can set.
+// ---------------------------------------------------------------------------
+
+/** Longest account name kept; Google names are short, this only bounds junk. */
+const ACCOUNT_NAME_MAX = 60;
+
+/**
+ * The `name` claim of an OIDC ID token, or null. Decodes only — the token
+ * arrived over TLS from the provider's token endpoint and Better Auth already
+ * trusted it to build the profile, so this is a read, not a verification.
+ */
+export function accountNameFromIdToken(idToken: unknown): string | null {
+  if (typeof idToken !== "string") return null;
+  const payload = idToken.split(".")[1];
+  if (!payload) return null;
+  try {
+    const b64 = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    const claims = JSON.parse(new TextDecoder().decode(bytes)) as { name?: unknown };
+    if (typeof claims.name !== "string") return null;
+    const name = claims.name.replace(/\s+/g, " ").trim().slice(0, ACCOUNT_NAME_MAX);
+    return name || null;
+  } catch {
+    return null;
+  }
+}
+
+/** The account row fields the sync needs; the hook sees the whole row. */
+interface AccountWrite {
+  providerId?: unknown;
+  userId?: unknown;
+  idToken?: unknown;
+}
+
+/**
+ * Mirror a Google account row's ID-token name onto its user. Runs after every
+ * account create/update, so a player who signed up before the column existed
+ * is backfilled on their next sign-in.
+ */
+export async function syncAccountName(
+  account: AccountWrite,
+  updateUser: ((userId: string, data: { accountName: string }) => Promise<unknown>) | undefined,
+): Promise<void> {
+  if (!updateUser || account.providerId !== "google" || typeof account.userId !== "string") return;
+  const accountName = accountNameFromIdToken(account.idToken);
+  if (!accountName) return;
+  await updateUser(account.userId, { accountName });
+}
+
 async function readSecret(
   direct: string | undefined,
   store: SecretsStoreSecret | undefined,
@@ -207,12 +262,26 @@ function createAuth(request: Request, env: ResolvedAuthEnv) {
         },
       }),
     ],
+    user: {
+      additionalFields: {
+        // The login identity behind the nickname; see syncAccountName.
+        accountName: { type: "string", required: false, input: false },
+      },
+    },
     databaseHooks: {
       user: {
         // Both hooks return only the corrected fields; Better Auth merges
         // them over the incoming write.
         create: { before: async (user) => ({ data: userWritePatch(user, "create") }) },
         update: { before: async (user) => ({ data: userWritePatch(user, "update") }) },
+      },
+      account: {
+        create: {
+          after: (account, ctx) => syncAccountName(account, ctx?.context.internalAdapter.updateUser),
+        },
+        update: {
+          after: (account, ctx) => syncAccountName(account, ctx?.context.internalAdapter.updateUser),
+        },
       },
     },
     rateLimit: {

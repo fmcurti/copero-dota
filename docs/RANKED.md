@@ -94,7 +94,11 @@ the room has no meaningful host.
 
 Players still **pick a team name per game**, signed in or not. The team name
 is in-room flavor (draft, broadcast, chat); everything durable — leaderboard,
-profile, history — shows the Better Auth account name.
+profile, history — shows the Better Auth account name (the nickname). The
+leaderboard also says who is behind each nickname: the Google account name
+(`user.accountName`, synced from the ID token on every Google sign-in) or, for
+password accounts, the part of the email before the `@` — never the full
+address, since the hub is public.
 
 ## Rating system
 

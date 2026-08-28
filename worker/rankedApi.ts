@@ -19,6 +19,21 @@ import type { Env } from "./env";
 
 const noStore = { headers: { "cache-control": "no-store" } };
 
+/** The ladder query's raw shape: both identity columns, resolved before leaving. */
+type LadderRow = Omit<LeaderboardRow, "account"> & { accountName: string | null; email: string };
+
+/**
+ * Resolve who is behind each nickname. The Google account name when there
+ * is one; otherwise the email's local part, so the full address never
+ * reaches the public hub.
+ */
+function ladderRows(rows: LadderRow[]): LeaderboardRow[] {
+  return rows.map(({ accountName, email, ...row }) => ({
+    ...row,
+    account: accountName ?? email.split("@")[0],
+  }));
+}
+
 /** Routes /api/ranked/*; null means "not one of ours". */
 export async function handleRankedApi(request: Request, env: Env): Promise<Response | null> {
   const { pathname } = new URL(request.url);
@@ -41,7 +56,8 @@ async function hub(request: Request, env: Env): Promise<Response> {
 
   const leaderboardQ = db
     .prepare(
-      `SELECT p.userId AS userId, u.name AS name, u.image AS image,
+      `SELECT p.userId AS userId, u.name AS name, u.accountName AS accountName,
+              u.email AS email, u.image AS image,
               p.rating AS rating, p.gamesPlayed AS gamesPlayed
        FROM ranked_profile p JOIN user u ON u.id = p.userId
        WHERE p.season = ?
@@ -51,7 +67,7 @@ async function hub(request: Request, env: Env): Promise<Response> {
     .bind(RANKED_SEASON);
 
   if (!user) {
-    const leaderboard = (await leaderboardQ.all<LeaderboardRow>()).results;
+    const leaderboard = ladderRows((await leaderboardQ.all<LadderRow>()).results);
     const body: RankedHub = { season: RANKED_SEASON, leaderboard, me: null, history: null };
     return Response.json(body, noStore);
   }
@@ -93,7 +109,7 @@ async function hub(request: Request, env: Env): Promise<Response> {
 
   const body: RankedHub = {
     season: RANKED_SEASON,
-    leaderboard: leaderboard.results as LeaderboardRow[],
+    leaderboard: ladderRows(leaderboard.results as LadderRow[]),
     me:
       (me.results[0] as RankedProfile | undefined) ??
       ({ rating: STARTING_RATING, gamesPlayed: 0, rank: null } satisfies RankedProfile),

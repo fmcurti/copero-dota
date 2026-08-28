@@ -172,6 +172,15 @@ inline image. The page's third section, victory taunts, is not account data:
 it reuses the run store's device-local win phrases, which seat sync already
 carries into rooms.
 
+The nickname is the only name a player can edit. Beside it, `user.accountName`
+(`migrations/auth/0003_account_name.sql`) records who they actually are: a
+`databaseHooks.account` hook (`syncAccountName`) copies the `name` claim of
+the Google ID token onto the user whenever a Google account row is created or
+refreshed — i.e. on every Google sign-in, which also backfills accounts that
+predate the column. The field is `input: false`, so `/update-user` cannot
+touch it; it is null for password accounts. The ranked leaderboard shows it
+under the nickname, falling back to the email's local part.
+
 Client-side route checks are only user experience. This project uses
 `HashRouter`, so a path such as `#/ranked` is never sent to the Worker. Ranked
 authorization must be enforced on every ranked HTTP mutation and on the ranked

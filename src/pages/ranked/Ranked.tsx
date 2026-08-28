@@ -150,13 +150,14 @@ export default function Ranked() {
               hub.leaderboard.map((row, i) => (
                 <div
                   key={row.userId}
-                  className={`flex items-baseline gap-3 rounded-lg px-3 py-2 text-sm ${
+                  className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm ${
                     row.userId === userId ? "panel border border-bone/40" : "panel"
                   }`}
                 >
                   <span className="w-8 shrink-0 font-mono text-xs text-slate-dim">#{i + 1}</span>
-                  <span className="min-w-0 flex-1 truncate font-semibold text-bone">
-                    {row.name}
+                  <span className="flex min-w-0 flex-1 flex-col leading-tight">
+                    <span className="truncate font-semibold text-bone">{row.name}</span>
+                    <span className="truncate text-xs text-slate-dim">{row.account}</span>
                   </span>
                   <span className="shrink-0 font-mono text-xs text-slate-dim">
                     {row.gamesPlayed}g

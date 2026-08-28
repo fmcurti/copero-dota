@@ -1,13 +1,62 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  accountNameFromIdToken,
   authCapabilities,
   handleDevOtp,
   MAX_AVATAR_CHARS,
+  syncAccountName,
   userWritePatch,
   type AuthEnv,
 } from "./auth";
 
 const authDb = {} as D1Database;
+
+/** An unsigned JWT with the given payload, base64url like a real ID token. */
+function idToken(claims: Record<string, unknown>): string {
+  const b64url = (s: string) =>
+    btoa(String.fromCharCode(...new TextEncoder().encode(s)))
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
+  return `${b64url('{"alg":"RS256"}')}.${b64url(JSON.stringify(claims))}.sig`;
+}
+
+describe("account name sync", () => {
+  it("reads the name claim of an ID token, accents included", () => {
+    expect(accountNameFromIdToken(idToken({ name: "  Ana   Pérez ", email: "a@b.c" }))).toBe(
+      "Ana Pérez",
+    );
+  });
+
+  it("returns null for tokens without a usable name", () => {
+    expect(accountNameFromIdToken(idToken({ email: "a@b.c" }))).toBeNull();
+    expect(accountNameFromIdToken(idToken({ name: "   " }))).toBeNull();
+    expect(accountNameFromIdToken(idToken({ name: 7 }))).toBeNull();
+    expect(accountNameFromIdToken("not.a-jwt")).toBeNull();
+    expect(accountNameFromIdToken(undefined)).toBeNull();
+    expect(accountNameFromIdToken(null)).toBeNull();
+  });
+
+  it("copies a Google account's ID-token name onto its user", async () => {
+    const updateUser = vi.fn().mockResolvedValue({});
+    await syncAccountName(
+      { providerId: "google", userId: "u1", idToken: idToken({ name: "Ana Pérez" }) },
+      updateUser,
+    );
+    expect(updateUser).toHaveBeenCalledWith("u1", { accountName: "Ana Pérez" });
+  });
+
+  it("leaves other providers and tokenless rows alone", async () => {
+    const updateUser = vi.fn();
+    await syncAccountName(
+      { providerId: "credential", userId: "u1", idToken: idToken({ name: "x" }) },
+      updateUser,
+    );
+    await syncAccountName({ providerId: "google", userId: "u1", idToken: null }, updateUser);
+    await syncAccountName({ providerId: "google", userId: "u1" }, undefined);
+    expect(updateUser).not.toHaveBeenCalled();
+  });
+});
 
 describe("auth environment", () => {
   it("reads account-level Secrets Store bindings", async () => {
